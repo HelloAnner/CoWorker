@@ -3,9 +3,13 @@ use std::{
     io,
     path::{Path, PathBuf},
 };
+use tokio::process::Command;
 
 #[cfg(windows)]
 use std::ffi::OsString;
+
+#[cfg(windows)]
+const CREATE_NO_WINDOW: u32 = 0x08000000;
 
 #[derive(Debug, Clone)]
 pub struct ResolvedCommand {
@@ -14,6 +18,12 @@ pub struct ResolvedCommand {
 }
 
 impl ResolvedCommand {
+    pub fn command(&self) -> Command {
+        let mut command = Command::new(self.executable());
+        suppress_console_window(&mut command);
+        command
+    }
+
     pub fn executable(&self) -> &Path {
         &self.executable
     }
@@ -29,6 +39,14 @@ impl ResolvedCommand {
         }
     }
 }
+
+#[cfg(windows)]
+fn suppress_console_window(command: &mut Command) {
+    command.creation_flags(CREATE_NO_WINDOW);
+}
+
+#[cfg(not(windows))]
+fn suppress_console_window(_command: &mut Command) {}
 
 pub fn resolve_command(command: &str) -> io::Result<ResolvedCommand> {
     let command = command.trim();

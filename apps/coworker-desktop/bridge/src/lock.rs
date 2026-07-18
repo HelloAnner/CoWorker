@@ -39,7 +39,7 @@ impl BridgeInstanceLock {
 
     pub fn release(&mut self) {
         if let Some(file) = self.file.take() {
-            let _ = file.unlock();
+            let _ = FileExt::unlock(&file);
         }
     }
 
@@ -62,7 +62,7 @@ impl BridgeInstanceLock {
             file.seek(SeekFrom::Start(0))?;
             let _ = file.read(&mut first)?;
         }
-        file.try_lock_exclusive()?;
+        FileExt::try_lock(&file).map_err(std::io::Error::from)?;
         file.seek(SeekFrom::Start(1))?;
         file.set_len(1)?;
         let metadata = json!({

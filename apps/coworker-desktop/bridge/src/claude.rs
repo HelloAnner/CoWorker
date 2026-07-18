@@ -13,7 +13,7 @@ use std::{
 use serde_json::{Value, json};
 use tokio::{
     io::{AsyncBufReadExt, AsyncWriteExt, BufReader, Lines},
-    process::{Child, ChildStdin, ChildStdout, Command},
+    process::{Child, ChildStdin, ChildStdout},
     sync::{Mutex, Notify},
 };
 
@@ -29,8 +29,6 @@ use crate::{
     logging::log_subprocess_line,
 };
 
-#[cfg(windows)]
-const CREATE_NO_WINDOW: u32 = 0x08000000;
 const DESKTOP_ALLOWED_MCP_TOOLS: &str =
     "mcp__coworker_desktop__list_coworkers,mcp__coworker_desktop__send_to_coworker";
 const CLAUDE_IDLE_TIMEOUT: Duration = Duration::from_secs(30 * 60);
@@ -345,7 +343,7 @@ impl ClaudeAdapter {
             mcp_config_path: mcp_config_path.clone(),
             broker,
         };
-        let mut command = resolved_command(&resolved);
+        let mut command = resolved.command();
         command
             .args(&self.config.args)
             .args([
@@ -387,8 +385,6 @@ impl ClaudeAdapter {
         if let Some(cwd) = project_path.filter(|value| !value.trim().is_empty()) {
             command.current_dir(cwd);
         }
-        suppress_console_window(&mut command);
-
         let mut child = command.spawn()?;
         let stdin = child
             .stdin
@@ -1379,18 +1375,6 @@ fn default_claude_home() -> PathBuf {
         })
         .unwrap_or_else(|| PathBuf::from(".claude"))
 }
-
-fn resolved_command(resolved: &ResolvedCommand) -> Command {
-    Command::new(resolved.executable())
-}
-
-#[cfg(windows)]
-fn suppress_console_window(command: &mut Command) {
-    command.creation_flags(CREATE_NO_WINDOW);
-}
-
-#[cfg(not(windows))]
-fn suppress_console_window(_command: &mut Command) {}
 
 #[cfg(test)]
 mod tests {

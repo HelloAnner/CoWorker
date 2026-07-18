@@ -14,7 +14,7 @@ use coworker_desktop_core::{
     claude::{list_history_conversations, merge_history_messages},
     codex_session as session,
     codex_session::{RuntimeSessionState, SessionSummary},
-    command_resolver::{ResolvedCommand, resolve_command},
+    command_resolver::resolve_command,
     config::{
         BridgeConfig, DEFAULT_DESKTOP_CONFIG_PATH, DesktopConfig, default_codex_names,
         default_config_value_with_display_name, read_config_value, write_config_value,
@@ -34,12 +34,9 @@ use tauri::{
 };
 use tauri_plugin_updater::{Update, UpdaterExt};
 use tauri_plugin_window_state::{AppHandleExt, StateFlags};
-use tokio::{process::Command, sync::oneshot, task::JoinHandle};
+use tokio::{sync::oneshot, task::JoinHandle};
 use tracing::{error, info, warn};
 use url::Url;
-
-#[cfg(windows)]
-const CREATE_NO_WINDOW: u32 = 0x08000000;
 
 const WINDOW_STATE_FILE: &str = "window-state.json";
 const TRAY_ID: &str = "coworker-desktop-tray";
@@ -1423,13 +1420,11 @@ async fn check_named_command(name: &str, command: &str) -> DiagnosticResult {
             };
         }
     };
-    let mut probe = resolved_command(&resolved);
+    let mut probe = resolved.command();
     probe
         .arg("--version")
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
-    suppress_console_window(&mut probe);
-
     match probe.output().await {
         Ok(output) if output.status.success() => DiagnosticResult {
             name: name.into(),
@@ -1462,13 +1457,12 @@ async fn check_app_server_command(command: &str, args: &[String]) -> DiagnosticR
             };
         }
     };
-    let mut probe = resolved_command(&resolved);
+    let mut probe = resolved.command();
     probe
         .args(args)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
-    suppress_console_window(&mut probe);
     match probe.spawn() {
         Ok(mut child) => {
             let _ = child.kill().await;
@@ -1484,10 +1478,6 @@ async fn check_app_server_command(command: &str, args: &[String]) -> DiagnosticR
             message: error.to_string(),
         },
     }
-}
-
-fn resolved_command(resolved: &ResolvedCommand) -> Command {
-    Command::new(resolved.executable())
 }
 
 async fn check_coworker(name: &str, base_url: &str) -> DiagnosticResult {
@@ -1527,13 +1517,6 @@ fn first_output_line(stdout: &[u8], stderr: &[u8]) -> Option<String> {
 
 fn to_message(error: impl std::fmt::Display) -> String {
     error.to_string()
-}
-
-fn suppress_console_window(command: &mut Command) {
-    #[cfg(windows)]
-    {
-        command.creation_flags(CREATE_NO_WINDOW);
-    }
 }
 
 #[cfg(test)]

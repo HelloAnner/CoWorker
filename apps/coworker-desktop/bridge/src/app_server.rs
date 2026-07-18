@@ -10,7 +10,7 @@ use std::{
 use serde_json::{Value, json};
 use tokio::{
     io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
-    process::{Child, ChildStdin, Command},
+    process::{Child, ChildStdin},
     sync::{Mutex, mpsc, oneshot},
     task::JoinHandle,
     time::{Duration, timeout},
@@ -18,13 +18,11 @@ use tokio::{
 use tracing::{debug, info, warn};
 
 use crate::{
-    command_resolver::{ResolvedCommand, resolve_command},
+    command_resolver::resolve_command,
     error::{BridgeError, Result},
     logging::log_subprocess_line,
 };
 
-#[cfg(windows)]
-const CREATE_NO_WINDOW: u32 = 0x08000000;
 const APP_SERVER_STOP_GRACE: Duration = Duration::from_secs(3);
 
 pub struct AppServerRequest {
@@ -105,14 +103,12 @@ impl CodexAppServerClient {
             display_path = %resolved.display_path().display(),
             "Resolved Codex app-server command"
         );
-        let mut command = resolved_command(&resolved);
+        let mut command = resolved.command();
         command
             .args(&self.inner.args)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
-        suppress_console_window(&mut command);
-
         let mut child = command.spawn().map_err(|error| {
             if error.kind() == std::io::ErrorKind::NotFound {
                 BridgeError::startup(format!(
@@ -363,17 +359,6 @@ impl CodexAppServerClient {
             }
         }
         Ok(())
-    }
-}
-
-fn resolved_command(resolved: &ResolvedCommand) -> Command {
-    Command::new(resolved.executable())
-}
-
-fn suppress_console_window(command: &mut Command) {
-    #[cfg(windows)]
-    {
-        command.creation_flags(CREATE_NO_WINDOW);
     }
 }
 
