@@ -18,6 +18,18 @@ updates:
       - /apps/coworker-desktop/desktop
     schedule:
       interval: weekly
+    groups:
+      vite:
+        patterns:
+          - vite
+          - vitest
+          - "@vitejs/plugin-react"
+      react:
+        patterns:
+          - react
+          - react-dom
+          - "@types/react"
+          - "@types/react-dom"
 
   - package-ecosystem: github-actions
     directory: /
