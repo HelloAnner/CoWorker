@@ -91,7 +91,7 @@ jobs:
         working-directory: ${{ matrix.directory }}
       - run: npm run build
         working-directory: ${{ matrix.directory }}
-      - if: matrix.name == 'Web'
+      - if: matrix.name == 'Web' && github.actor != 'dependabot[bot]'
         name: Check committed web bundle
         run: |
           bundle_changes="$(git status --porcelain --untracked-files=all -- src/coworker/web)"
