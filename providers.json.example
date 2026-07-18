@@ -1,0 +1,22 @@
+[
+  {
+    "name": "zhipu-userA",
+    "type": "zhipu",
+    "api_key": "用户A的智谱key",
+    "base_url": "",
+    "default_model": "glm-5.1"
+  },
+  {
+    "name": "zhipu-userB",
+    "type": "zhipu",
+    "api_key": "用户B的智谱key",
+    "base_url": "https://open.bigmodel.cn/api/paas/v4/",
+    "default_model": "glm-4.7"
+  },
+  {
+    "name": "anthropic",
+    "type": "anthropic",
+    "api_key": "也可在此覆盖扁平字段的同名默认实例",
+    "base_url": ""
+  }
+]

@@ -1,0 +1,362 @@
+from __future__ import annotations
+
+import asyncio
+import json
+import re
+import uuid
+from collections.abc import Awaitable, Callable
+from dataclasses import replace
+from datetime import datetime
+from pathlib import Path
+from typing import Any
+
+from loguru import logger
+
+from coworker.core.types import CommunicateRegistration, CommunicateRequest, ToolResult
+from coworker.tools.base import Tool, ToolDefinition
+
+# 接受裸 participant_id（无前缀），返回规范化的完整 participant_id；若无法处理则返回 None
+Checker = Callable[[str], "str | None"]
+Sender = Callable[[CommunicateRequest], Awaitable[ToolResult]]
+ConnectionListener = Callable[[], None]
+
+_UNSAFE_OUTBOX_CHARS_RE = re.compile(r'[<>:"/\\|?*\x00-\x1f]+')
+_SAFE_PARTICIPANT_CHARS_RE = re.compile(r"[^a-zA-Z0-9_.:-]+")
+
+
+class CommunicateTool(Tool):
+    def __init__(self, outbox_dir: str) -> None:
+        self._outbox = Path(outbox_dir)
+        self._registrations_path = self._outbox.parent / "communicate_registrations.json"
+        self._ws_connections: dict[str, asyncio.Queue] = {}
+        self._senders: dict[str, Sender] = {}
+        self._checkers: dict[str, Checker] = {}
+        self._connection_listeners: list[ConnectionListener] = []
+
+    def add_connection_listener(self, listener: ConnectionListener) -> None:
+        self._connection_listeners.append(listener)
+
+    def register_ws(self, participant_id: str, queue: asyncio.Queue) -> bool:
+        """Register an outbound queue for a participant.
+
+        The first live connection owns the participant_id. Later SSE/WS
+        connections using the same id are rejected instead of replacing it.
+        """
+        if participant_id in self._ws_connections:
+            return False
+        self._ws_connections[participant_id] = queue
+        self._notify_connection_listeners()
+        return True
+
+    def unregister_ws(self, participant_id: str, queue: asyncio.Queue | None = None) -> None:
+        # 身份守卫：传了 queue 时，仅当注册表里当前就是这个 queue 才删除。
+        # 防止 SSE 与 WS 用同一 participant_id 时互相误删对方的 queue，
+        # 也修复 WS 旧连接断开误删新连接的潜在竞态。
+        if queue is not None and self._ws_connections.get(participant_id) is not queue:
+            return
+        if participant_id not in self._ws_connections:
+            return
+        self._ws_connections.pop(participant_id, None)
+        self._notify_connection_listeners()
+
+    def outbound_queue(self, participant_id: str) -> asyncio.Queue | None:
+        return self._ws_connections.get(participant_id)
+
+    def register_sender(self, prefix: str, sender: Sender, checker: Checker | None = None) -> None:
+        """注册一个按 participant_id 前缀路由的发送器（如 wecom: → 企微 runner.sender）。
+        可选传入 checker：当 participant_id 无前缀时，用于判断该信道能否处理并返回规范化 ID。
+        """
+        self._senders[prefix] = sender
+        if checker is not None:
+            self._checkers[prefix] = checker
+
+    @property
+    def definition(self) -> ToolDefinition:
+        description = (
+            "向指定通信对象发送消息。participant_id 表示对象；conversation_id "
+            "表示同一对象下的某段会话。attachments 和 extra 的支持情况由目标信道决定。"
+        )
+        return ToolDefinition(
+            name="communicate",
+            description=description,
+            parameters={
+                "type": "object",
+                "properties": {
+                    "participant_id": {"type": "string", "description": "接收方的 ID"},
+                    "message": {"type": "string", "description": "要发送的消息内容"},
+                    "conversation_id": {
+                        "type": "string",
+                        "description": "同一 participant_id 下的会话 ID。",
+                    },
+                    "attachments": {
+                        "type": "array",
+                        "description": "可选附件；具体支持情况由目标信道决定。",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "type": {
+                                    "type": "string",
+                                    "description": "附件类型：image / file",
+                                    "enum": ["image", "file"],
+                                },
+                                "filename": {
+                                    "type": "string",
+                                    "description": "可选展示文件名；默认使用 path 的文件名",
+                                },
+                                "media_type": {
+                                    "type": "string",
+                                    "description": "可选 MIME 类型；默认按文件扩展名推断",
+                                },
+                                "path": {
+                                    "type": "string",
+                                    "description": "本地文件绝对或相对路径",
+                                },
+                            },
+                            "required": ["path"],
+                        },
+                    },
+                    "extra": {
+                        "type": "object",
+                        "description": "低频信道扩展；具体白名单由目标信道决定。",
+                    },
+                },
+                "required": ["participant_id"],
+            },
+        )
+
+    def list_connected(self) -> list[str]:
+        return list(self._ws_connections.keys())
+
+    def _notify_connection_listeners(self) -> None:
+        for listener in list(self._connection_listeners):
+            try:
+                listener()
+            except Exception as error:
+                logger.warning(f"Communicate connection listener raised, ignored: {error}")
+
+    def register_participant(
+        self,
+        *,
+        kind: str,
+        client_id: str,
+        display_name: str = "",
+        metadata: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        kind = kind.strip()
+        client_id = client_id.strip()
+        if not kind:
+            raise ValueError("kind is required")
+        if not client_id:
+            raise ValueError("client_id is required")
+
+        registrations = self._load_registrations()
+        now = datetime.now().isoformat()
+        reusable = next(
+            (
+                item
+                for item in registrations
+                if item.kind == kind
+                and item.client_id == client_id
+                and item.participant_id not in self._ws_connections
+            ),
+            None,
+        )
+        if reusable is not None:
+            reusable.display_name = display_name or reusable.display_name
+            reusable.last_registered_at = now
+            reusable.metadata = metadata or reusable.metadata
+            self._save_registrations(registrations)
+            return reusable.to_dict(active=False)
+
+        registration = CommunicateRegistration(
+            registration_id=uuid.uuid4().hex,
+            participant_id=self._next_participant_id(kind, client_id, registrations),
+            kind=kind,
+            client_id=client_id,
+            display_name=display_name or client_id,
+            created_at=now,
+            last_registered_at=now,
+            metadata=metadata or {},
+        )
+        registrations.append(registration)
+        self._save_registrations(registrations)
+        return registration.to_dict(active=False)
+
+    def list_registrations(self) -> list[dict[str, Any]]:
+        return [
+            item.to_dict(active=item.participant_id in self._ws_connections)
+            for item in self._load_registrations()
+        ]
+
+    def registration_records(self) -> list[CommunicateRegistration]:
+        return self._load_registrations()
+
+    def delete_registration(self, registration_id: str) -> dict[str, Any]:
+        registrations = self._load_registrations()
+        for index, item in enumerate(registrations):
+            if item.registration_id != registration_id:
+                continue
+            if item.participant_id in self._ws_connections:
+                raise RuntimeError("registration is active; stop the connection before deleting it")
+            removed = registrations.pop(index)
+            self._save_registrations(registrations)
+            return removed.to_dict(active=False)
+        raise KeyError(registration_id)
+
+    def _next_participant_id(
+        self,
+        kind: str,
+        client_id: str,
+        registrations: list[CommunicateRegistration],
+    ) -> str:
+        used = {item.participant_id for item in registrations}
+        prefix = _SAFE_PARTICIPANT_CHARS_RE.sub("-", kind).strip(".:-") or "unknown"
+        client_segment = _SAFE_PARTICIPANT_CHARS_RE.sub("-", client_id).strip(".:-") or "unknown"
+        base = f"{prefix}:{client_segment}"
+        while True:
+            candidate = f"{base}:{uuid.uuid4().hex[:8]}"
+            if candidate not in used and candidate not in self._ws_connections:
+                return candidate
+
+    def _load_registrations(self) -> list[CommunicateRegistration]:
+        try:
+            data = json.loads(self._registrations_path.read_text(encoding="utf-8"))
+        except FileNotFoundError:
+            return []
+        except Exception as error:
+            logger.warning(f"Failed to read communicate registrations: {error}")
+            return []
+        if not isinstance(data, list):
+            return []
+        return [CommunicateRegistration.from_dict(item) for item in data if isinstance(item, dict)]
+
+    def _save_registrations(self, registrations: list[CommunicateRegistration]) -> None:
+        self._registrations_path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = self._registrations_path.with_name(f".{self._registrations_path.name}.tmp")
+        tmp.write_text(
+            json.dumps(
+                [item.to_dict(active=False) for item in registrations if item.participant_id],
+                ensure_ascii=False,
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+        tmp.replace(self._registrations_path)
+
+    async def execute(
+        self,
+        participant_id: str,
+        message: str = "",
+        conversation_id: str | None = None,
+        attachments: list[dict[str, Any]] | None = None,
+        extra: dict[str, Any] | None = None,
+        **_,
+    ) -> ToolResult:
+        attachments = attachments or []
+        extra = extra or {}
+        if not isinstance(extra, dict):
+            return ToolResult(tool_call_id="", content="extra 必须是对象。", is_error=True)
+
+        request = CommunicateRequest(
+            participant_id=participant_id,
+            message=message,
+            conversation_id=conversation_id,
+            attachments=attachments,
+            extra=extra,
+        )
+        for prefix, sender in sorted(
+            self._senders.items(), key=lambda item: len(item[0]), reverse=True
+        ):
+            if participant_id.startswith(prefix):
+                return await sender(request)
+
+        if self._checkers:
+            resolved: dict[str, str] = {}
+            for prefix, checker in self._checkers.items():
+                canonical = checker(participant_id)
+                if canonical is not None:
+                    resolved[prefix] = canonical
+            if len(resolved) == 1:
+                prefix, canonical_id = next(iter(resolved.items()))
+                return await self._senders[prefix](replace(request, participant_id=canonical_id))
+            elif len(resolved) > 1:
+                options = "\n".join(f"  - {cid}（前缀：{p}）" for p, cid in resolved.items())
+                return ToolResult(
+                    tool_call_id="",
+                    content=(
+                        f"participant_id '{participant_id}' 在多个信道中都能匹配，"
+                        f"请使用完整 participant_id 重新调用：\n{options}"
+                    ),
+                    is_error=True,
+                )
+
+        try:
+            if participant_id in self._ws_connections:
+                await self._ws_connections[participant_id].put(request)
+                return ToolResult(
+                    tool_call_id="",
+                    content=f"消息已通过WebSocket发送给 {participant_id}",
+                )
+            if conversation_id:
+                return ToolResult(
+                    tool_call_id="",
+                    content="该通信目标不支持 conversation_id；请去掉该字段后重试。",
+                    is_error=True,
+                )
+            if extra:
+                return ToolResult(
+                    tool_call_id="",
+                    content="该通信目标不支持 extra 扩展参数。",
+                    is_error=True,
+                )
+            if attachments:
+                return ToolResult(
+                    tool_call_id="",
+                    content="该通信目标不支持附件；请改用支持附件的信道。",
+                    is_error=True,
+                )
+            if not message:
+                return ToolResult(
+                    tool_call_id="",
+                    content="message 不能为空。",
+                    is_error=True,
+                )
+
+            self._outbox.mkdir(parents=True, exist_ok=True)
+            ts = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+            safe_participant_id = (
+                _UNSAFE_OUTBOX_CHARS_RE.sub("-", participant_id).strip(" .-") or "unknown"
+            )
+            out_file = self._outbox / f"{ts}_{safe_participant_id}.md"
+            out_file.write_text(message, encoding="utf-8")
+
+            logger.debug(f"No active WS for {participant_id}, message written to outbox only")
+
+            return ToolResult(
+                tool_call_id="", content=f"消息发送失败, 已记录在本地文件: {out_file}"
+            )
+        except Exception as e:
+            return ToolResult(tool_call_id="", content=f"消息发送失败: {e}", is_error=True)
+
+
+class ListWSConnectionsTool(Tool):
+    def __init__(self, communicate: CommunicateTool) -> None:
+        self._communicate = communicate
+
+    @property
+    def definition(self) -> ToolDefinition:
+        return ToolDefinition(
+            name="list_ws_connections",
+            description="列出当前通过 WebSocket 连接的所有参与者 ID",
+            parameters={
+                "type": "object",
+                "properties": {},
+                "required": [],
+            },
+        )
+
+    async def execute(self, **_) -> ToolResult:
+        connected = self._communicate.list_connected()
+        if not connected:
+            return ToolResult(tool_call_id="", content="当前没有活跃的 WebSocket 连接。")
+        return ToolResult(tool_call_id="", content="\n".join(connected))

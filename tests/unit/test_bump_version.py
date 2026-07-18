@@ -1,0 +1,93 @@
+from __future__ import annotations
+
+from scripts import bump_version
+
+
+def test_update_uv_lock_updates_coworker_package(tmp_path, monkeypatch) -> None:
+    path = tmp_path / "uv.lock"
+    path.write_text(
+        '[[package]]\nname = "coworker"\nversion = "0.2.0"\n\n'
+        '[[package]]\nname = "dependency"\nversion = "1.0.0"\n',
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(bump_version, "ROOT", tmp_path)
+
+    bump_version.update_uv_lock(path, "0.2.1")
+
+    assert path.read_text(encoding="utf-8") == (
+        '[[package]]\nname = "coworker"\nversion = "0.2.1"\n\n'
+        '[[package]]\nname = "dependency"\nversion = "1.0.0"\n'
+    )
+
+
+def test_update_cargo_lock_updates_workspace_packages(tmp_path, monkeypatch) -> None:
+    path = tmp_path / "Cargo.lock"
+    path.write_text(
+        '[[package]]\nname = "coworker-desktop-app"\nversion = "0.2.0"\n\n'
+        '[[package]]\nname = "dependency"\nversion = "0.2.0"\n\n'
+        '[[package]]\nname = "coworker-desktop-core"\nversion = "0.2.0"\n',
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(bump_version, "ROOT", tmp_path)
+
+    bump_version.update_cargo_lock(path, "0.2.1")
+
+    assert path.read_text(encoding="utf-8") == (
+        '[[package]]\nname = "coworker-desktop-app"\nversion = "0.2.1"\n\n'
+        '[[package]]\nname = "dependency"\nversion = "0.2.0"\n\n'
+        '[[package]]\nname = "coworker-desktop-core"\nversion = "0.2.1"\n'
+    )
+
+
+def test_upsert_changelog_section_inserts_after_title() -> None:
+    text = "# Changelog\n\n## 0.1.0 - Unreleased\n\n- Initial release.\n"
+
+    result = bump_version.upsert_changelog_section(text, "0.2.0", "- feat: add bridge")
+
+    assert result == (
+        "# Changelog\n\n"
+        "## 0.2.0 - Unreleased\n\n"
+        "- feat: add bridge\n\n"
+        "## 0.1.0 - Unreleased\n\n"
+        "- Initial release.\n"
+    )
+
+
+def test_upsert_changelog_section_replaces_todo_body() -> None:
+    text = (
+        "# Changelog\n\n"
+        "## 0.2.0 - Unreleased\n\n"
+        "- TODO\n\n"
+        "## 0.1.0 - Unreleased\n\n"
+        "- Initial release.\n"
+    )
+
+    result = bump_version.upsert_changelog_section(text, "0.2.0", "- fix: repair updater")
+
+    assert result == (
+        "# Changelog\n\n"
+        "## 0.2.0 - Unreleased\n\n"
+        "- fix: repair updater\n\n"
+        "## 0.1.0 - Unreleased\n\n"
+        "- Initial release.\n"
+    )
+
+
+def test_upsert_changelog_section_preserves_manual_body() -> None:
+    text = "# Changelog\n\n## 0.2.0 - Unreleased\n\n- 手写发布说明\n"
+
+    assert bump_version.upsert_changelog_section(text, "0.2.0", "- feat: add bridge") == text
+
+
+def test_normalize_changelog_subject_filters_release_noise() -> None:
+    assert (
+        bump_version.normalize_changelog_subject(
+            "Pull request #91: optimize(subconscious): 优化审计，针对长期任务优化"
+        )
+        == "optimize(subconscious): 优化审计，针对长期任务优化"
+    )
+    assert bump_version.normalize_changelog_subject("chore(release): bump version to 0.2.0") is None
+    assert bump_version.normalize_changelog_subject("world_model: update morning progress") is None
+    assert bump_version.normalize_changelog_subject("chore(world_model): add trace note") is None
+    assert bump_version.normalize_changelog_subject("thinking.md: add a working principle") is None
+    assert bump_version.normalize_changelog_subject("fix(testing): add local discipline") is None

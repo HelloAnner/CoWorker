@@ -1,0 +1,4 @@
+dist
+node_modules
+src-tauri/data
+src-tauri/gen

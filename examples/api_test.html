@@ -1,0 +1,2538 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Coworker API Test</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: #f0f2f5;
+      min-height: 100vh;
+      padding: 24px;
+    }
+
+    .page {
+      max-width: 800px;
+      margin: 0 auto;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+
+    .header {
+      background: #1a1a2e;
+      color: #fff;
+      border-radius: 12px;
+      padding: 20px 24px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .header h1 {
+      font-size: 18px;
+      font-weight: 600;
+    }
+
+    .header .subtitle {
+      font-size: 13px;
+      color: rgba(255,255,255,0.5);
+      margin-top: 2px;
+    }
+
+    .card {
+      background: #fff;
+      border-radius: 12px;
+      box-shadow: 0 2px 12px rgba(0,0,0,0.08);
+      overflow: hidden;
+    }
+
+    .card-title {
+      padding: 14px 20px;
+      font-size: 13px;
+      font-weight: 600;
+      color: #555;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      border-bottom: 1px solid #f0f0f0;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .card-body {
+      padding: 20px;
+    }
+
+    /* Server URL bar */
+    .url-bar {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+    }
+
+    .url-bar label {
+      font-size: 13px;
+      color: #666;
+      white-space: nowrap;
+    }
+
+    .url-bar input {
+      flex: 1;
+      padding: 8px 12px;
+      border: 1px solid #ddd;
+      border-radius: 8px;
+      font-size: 14px;
+      font-family: monospace;
+      outline: none;
+    }
+
+    .url-bar input:focus { border-color: #667eea; }
+
+    /* Status grid */
+    .status-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+      gap: 12px;
+    }
+
+    .status-item {
+      background: #f8f9fa;
+      border-radius: 8px;
+      padding: 12px 14px;
+    }
+
+    .status-item .label {
+      font-size: 11px;
+      color: #888;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      margin-bottom: 4px;
+    }
+
+    .status-item .value {
+      font-size: 15px;
+      font-weight: 600;
+      color: #1a1a2e;
+      word-break: break-all;
+    }
+
+    .usage-panel {
+      margin-top: 12px;
+      border: 1px solid #e5e7eb;
+      border-radius: 8px;
+      background: linear-gradient(180deg, #fbfcfe, #fff);
+      padding: 12px;
+    }
+    .usage-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      flex-wrap: wrap;
+      gap: 12px;
+      margin-bottom: 10px;
+      color: #475569;
+      font-size: 12px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+    .usage-head button {
+      border: 1px solid #e5e7eb;
+      border-radius: 7px;
+      background: #fff;
+      color: #475569;
+      cursor: pointer;
+      font-size: 12px;
+      font-weight: 700;
+      padding: 5px 9px;
+    }
+    .usage-compact {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+    }
+    .usage-compact span {
+      border: 1px solid #e5e7eb;
+      border-radius: 999px;
+      background: #fff;
+      color: #64748b;
+      font-family: monospace;
+      font-size: 11px;
+      padding: 5px 8px;
+    }
+    .usage-compact b {
+      color: #111827;
+    }
+    .usage-window-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(min(100%, 360px), 1fr));
+      gap: 12px;
+      margin-top: 10px;
+    }
+    .usage-window {
+      border: 1px solid #e5e7eb;
+      border-radius: 8px;
+      background: #fff;
+      padding: 10px;
+    }
+    .usage-window-title {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 8px;
+      margin-bottom: 8px;
+    }
+    .usage-window-title h3 {
+      margin: 0;
+      color: #1a1a2e;
+      font-size: 13px;
+    }
+    .usage-window-title span {
+      color: #64748b;
+      font-family: monospace;
+      font-size: 11px;
+    }
+    .usage-metrics {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+    }
+    .usage-metric {
+      min-width: 0;
+      border-radius: 6px;
+      background: #f8fafc;
+      padding: 8px;
+      border: 1px solid #eef2f7;
+    }
+    .usage-metric span {
+      display: block;
+      color: #64748b;
+      font-size: 10px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.4px;
+      margin-bottom: 2px;
+    }
+    .usage-metric strong {
+      display: block;
+      color: #111827;
+      font-family: monospace;
+      font-size: 15px;
+      line-height: 1.2;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .usage-breakdown {
+      margin-top: 10px;
+      padding-top: 10px;
+      border-top: 1px solid #eef2f7;
+    }
+    .usage-scope {
+      margin-top: 10px;
+      padding-top: 10px;
+      border-top: 1px solid #eef2f7;
+    }
+    .usage-scope-title {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      margin-bottom: 6px;
+      color: #64748b;
+      font-size: 10px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.4px;
+    }
+    .usage-scope-row {
+      display: grid;
+      grid-template-columns: minmax(72px, 0.8fr) repeat(4, minmax(54px, 1fr));
+      gap: 6px;
+      align-items: center;
+      padding: 6px 0;
+      border-top: 1px solid #f1f5f9;
+      color: #111827;
+      font-family: monospace;
+      font-size: 10px;
+    }
+    .usage-scope-row:first-of-type {
+      border-top: 0;
+    }
+    .usage-scope-row strong {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      color: #1a1a2e;
+      font-family: inherit;
+      font-size: 10px;
+    }
+    .usage-scope-row span {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      color: #475569;
+    }
+    .usage-line-head,
+    .usage-cache-line,
+    .usage-top-head,
+    .usage-top-row-main {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+    }
+    .usage-line-head {
+      margin-bottom: 6px;
+      color: #64748b;
+      font-size: 11px;
+      font-weight: 700;
+    }
+    .usage-stack {
+      display: flex;
+      width: 100%;
+      height: 8px;
+      overflow: hidden;
+      border-radius: 999px;
+      background: #e5e7eb;
+    }
+    .usage-stack i {
+      display: block;
+      width: var(--w, 0%);
+    }
+    .usage-stack .in { background: #2563eb; }
+    .usage-stack .out { background: #16a34a; }
+    .usage-cache-line {
+      margin-top: 8px;
+      color: #64748b;
+      font-size: 11px;
+      font-weight: 700;
+    }
+    .usage-cache-track,
+    .usage-top-track {
+      flex: 1;
+      height: 5px;
+      overflow: hidden;
+      border-radius: 999px;
+      background: #e5e7eb;
+    }
+    .usage-cache-track i,
+    .usage-top-track i {
+      display: block;
+      width: var(--w, 0%);
+      height: 100%;
+      border-radius: inherit;
+      background: #f59e0b;
+    }
+    .usage-top-grid {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 8px;
+      margin-top: 10px;
+    }
+    .usage-top-list {
+      min-width: 0;
+      border-radius: 6px;
+      background: #f8fafc;
+      padding: 8px;
+      border: 1px solid #eef2f7;
+    }
+    .usage-top-head {
+      color: #64748b;
+      font-size: 10px;
+      font-weight: 700;
+      margin-bottom: 6px;
+    }
+    .usage-top-row {
+      display: grid;
+      gap: 4px;
+      margin-top: 7px;
+    }
+    .usage-top-scroll {
+      max-height: 154px;
+      overflow-y: auto;
+      padding-right: 4px;
+      scrollbar-width: thin;
+      scrollbar-color: #cbd5e1 transparent;
+    }
+    .usage-top-scroll::-webkit-scrollbar {
+      width: 7px;
+    }
+    .usage-top-scroll::-webkit-scrollbar-track {
+      background: transparent;
+    }
+    .usage-top-scroll::-webkit-scrollbar-thumb {
+      border: 2px solid #f8fafc;
+      border-radius: 999px;
+      background: #cbd5e1;
+    }
+    .usage-top-scroll::-webkit-scrollbar-thumb:hover {
+      background: #94a3b8;
+    }
+    .usage-top-row-main span {
+      min-width: 0;
+      overflow: hidden;
+      color: #111827;
+      font-size: 11px;
+      font-weight: 700;
+      text-overflow: ellipsis;
+      white-space: normal;
+      overflow-wrap: anywhere;
+      line-height: 1.25;
+    }
+    .usage-top-row-main strong {
+      flex: none;
+      color: #111827;
+      font-family: monospace;
+      font-size: 11px;
+    }
+    .usage-top-row em,
+    .usage-top-empty {
+      color: #64748b;
+      font-family: monospace;
+      font-size: 10px;
+      font-style: normal;
+    }
+    .usage-metric em {
+      display: block;
+      color: #64748b;
+      font-family: monospace;
+      font-size: 10px;
+      font-style: normal;
+      line-height: 1.4;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .badge {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 12px;
+      font-size: 12px;
+      font-weight: 600;
+    }
+
+    .badge-green { background: #d1fae5; color: #059669; }
+    .badge-red   { background: #fee2e2; color: #dc2626; }
+    .badge-gray  { background: #f3f4f6; color: #6b7280; }
+    .badge-blue  { background: #dbeafe; color: #2563eb; }
+    .badge-amber { background: #fef3c7; color: #b45309; }
+
+    /* Task list (debug/tasks) */
+    .tasks-summary { font-size: 13px; color: #555; margin-bottom: 10px; }
+    .task-row {
+      background: #f8f9fa;
+      border-radius: 8px;
+      padding: 10px 12px;
+      margin-bottom: 8px;
+      border-left: 3px solid #e5e7eb;
+    }
+    .task-row.pending { border-left-color: #f59e0b; }
+    .task-row .task-head {
+      display: flex; align-items: center; gap: 8px;
+      font-family: monospace; font-size: 13px; font-weight: 600; color: #1a1a2e;
+    }
+    .task-row .task-coro { font-size: 11px; color: #888; margin-top: 2px; }
+    .task-row .task-where {
+      font-family: monospace; font-size: 12px; color: #475569;
+      margin-top: 4px; word-break: break-all;
+    }
+
+    /* Form */
+    .form-row {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+      margin-bottom: 12px;
+    }
+
+    .form-group {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .form-group label {
+      font-size: 13px;
+      color: #555;
+      font-weight: 500;
+    }
+
+    .form-group input,
+    .form-group select,
+    .form-group textarea {
+      padding: 9px 12px;
+      border: 1px solid #ddd;
+      border-radius: 8px;
+      font-size: 14px;
+      outline: none;
+      font-family: inherit;
+    }
+
+    .form-group input:focus,
+    .form-group select:focus,
+    .form-group textarea:focus { border-color: #667eea; }
+
+    .release-batch {
+      display: grid;
+      gap: 8px;
+      margin: -2px 0 12px;
+    }
+    .release-dropzone {
+      display: grid;
+      gap: 6px;
+      border: 1px dashed #94a3b8;
+      border-radius: 8px;
+      background: #f8fafc;
+      color: #334155;
+      cursor: pointer;
+      padding: 14px;
+      position: relative;
+      transition: background 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease;
+    }
+    .release-dropzone:hover,
+    .release-dropzone.dragging {
+      border-color: #2563eb;
+      background: #eff6ff;
+      box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.12);
+    }
+    .release-dropzone:focus-within {
+      border-color: #2563eb;
+      box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.18);
+    }
+    .release-dropzone strong {
+      font-size: 13px;
+      color: #0f172a;
+    }
+    .release-dropzone span {
+      font-size: 12px;
+      line-height: 1.45;
+      color: #64748b;
+    }
+    .release-dropzone input {
+      width: 1px;
+      height: 1px;
+      margin: 0;
+      opacity: 0;
+      pointer-events: none;
+      position: absolute;
+    }
+    .release-batch.empty {
+      color: #888;
+      font-size: 13px;
+    }
+    .release-batch-note {
+      border: 1px solid #dbeafe;
+      border-radius: 8px;
+      background: #eff6ff;
+      color: #1d4ed8;
+      font-family: monospace;
+      font-size: 12px;
+      padding: 8px 10px;
+    }
+    .release-batch-note.error {
+      border-color: #fecaca;
+      background: #fef2f2;
+      color: #b91c1c;
+    }
+    .release-batch-groups {
+      display: grid;
+      gap: 8px;
+    }
+    .release-batch-group {
+      border: 1px solid #e5e7eb;
+      border-radius: 8px;
+      background: #fff;
+      overflow: hidden;
+    }
+    .release-batch-group.updater {
+      border-top: 3px solid #2563eb;
+    }
+    .release-batch-group.installer {
+      border-top: 3px solid #059669;
+    }
+    .release-batch-group-head {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      gap: 8px;
+      padding: 8px 10px;
+      border-bottom: 1px solid #eef2f7;
+      background: #f8fafc;
+    }
+    .release-batch-group-head strong {
+      color: #111827;
+      font-size: 13px;
+    }
+    .release-batch-group-head small {
+      display: block;
+      color: #64748b;
+      font-size: 11px;
+      line-height: 1.35;
+      margin-top: 2px;
+    }
+    .release-batch-count {
+      color: #64748b;
+      font-family: monospace;
+      font-size: 11px;
+      white-space: nowrap;
+    }
+    .release-batch-empty-kind {
+      color: #94a3b8;
+      font-size: 12px;
+      padding: 8px 10px;
+    }
+    .release-batch-row {
+      display: grid;
+      gap: 5px;
+      background: #fff;
+      border-top: 1px solid #eef2f7;
+      padding: 8px 10px;
+      font-size: 12px;
+    }
+    .release-batch-group-head + .release-batch-row {
+      border-top: 0;
+    }
+    .release-batch-name {
+      min-width: 0;
+      color: #111827;
+      font-family: monospace;
+      overflow-wrap: anywhere;
+    }
+    .release-batch-fileline {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 8px;
+    }
+    .release-file-remove {
+      border: 1px solid #fecaca;
+      border-radius: 6px;
+      background: #fff;
+      color: #b91c1c;
+      cursor: pointer;
+      flex: 0 0 auto;
+      font-size: 12px;
+      line-height: 1;
+      padding: 5px 8px;
+    }
+    .release-file-remove:hover {
+      background: #fef2f2;
+      border-color: #fca5a5;
+    }
+    .release-batch-platform {
+      color: #374151;
+      font-family: monospace;
+      font-weight: 700;
+    }
+    .release-batch-meta {
+      display: flex;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 6px;
+    }
+    .release-batch-state {
+      white-space: nowrap;
+    }
+
+    /* Buttons */
+    .btn {
+      padding: 9px 18px;
+      border: none;
+      border-radius: 8px;
+      font-size: 14px;
+      font-weight: 500;
+      cursor: pointer;
+      transition: opacity 0.15s;
+    }
+
+    .btn:hover { opacity: 0.85; }
+    .btn:active { opacity: 0.7; }
+    .btn:disabled { opacity: 0.45; cursor: default; }
+
+    .btn-primary { background: #667eea; color: #fff; }
+    .btn-secondary { background: #f3f4f6; color: #374151; }
+    .btn-sm { padding: 6px 12px; font-size: 13px; }
+
+    /* Response box */
+    .response-box {
+      margin-top: 14px;
+      background: #1e1e2e;
+      border-radius: 8px;
+      padding: 14px 16px;
+      font-family: monospace;
+      font-size: 13px;
+      color: #cdd6f4;
+      min-height: 56px;
+      white-space: pre-wrap;
+      word-break: break-all;
+      line-height: 1.5;
+    }
+
+    .response-box.success { border-left: 3px solid #40a02b; }
+    .response-box.error   { border-left: 3px solid #d20f39; }
+    .response-box.empty   { color: #585b70; font-style: italic; }
+    .response-box.is-collapsed { display: none; }
+
+    .status-response-actions {
+      margin-top: 14px;
+      display: flex;
+      justify-content: flex-end;
+    }
+
+    .status-response-actions + .response-box {
+      margin-top: 8px;
+    }
+
+    .inbound-feed {
+      display: grid;
+      gap: 10px;
+      margin-top: 14px;
+    }
+    .inbound-item {
+      border: 1px solid #e5e7eb;
+      border-radius: 8px;
+      background: #f8fafc;
+      padding: 10px 12px;
+    }
+    .inbound-meta {
+      color: #64748b;
+      font-family: monospace;
+      font-size: 11px;
+      margin-bottom: 6px;
+    }
+    .inbound-text {
+      color: #111827;
+      font-size: 13px;
+      line-height: 1.5;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+    .inbound-attachments {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 8px;
+    }
+    .inbound-attachments img {
+      max-width: 220px;
+      max-height: 160px;
+      border: 1px solid #e5e7eb;
+      border-radius: 8px;
+      object-fit: contain;
+      background: #fff;
+    }
+    .inbound-file {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      border: 1px solid #e5e7eb;
+      border-radius: 8px;
+      background: #fff;
+      color: #374151;
+      font-size: 12px;
+      padding: 6px 9px;
+      text-decoration: none;
+    }
+
+    /* Progress bar (backfill) */
+    .progress-wrap { margin-top: 14px; display: none; }
+    .progress-label { font-family: monospace; font-size: 13px; color: #cdd6f4; margin-bottom: 6px; }
+    .progress-track { background: #313244; border-radius: 6px; height: 18px; overflow: hidden; }
+    .progress-fill  { background: #40a02b; height: 100%; width: 0%; transition: width .3s ease; }
+
+    /* Spinner */
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .spinner {
+      display: inline-block;
+      width: 14px; height: 14px;
+      border: 2px solid transparent;
+      border-top-color: currentColor;
+      border-radius: 50%;
+      animation: spin 0.6s linear infinite;
+      vertical-align: middle;
+      margin-right: 6px;
+    }
+
+    @media (max-width: 640px) {
+      body { padding: 14px; }
+      .usage-head { align-items: flex-start; flex-direction: column; }
+      .usage-window-grid { grid-template-columns: 1fr; }
+      .usage-metrics,
+      .usage-top-grid { grid-template-columns: 1fr; }
+      .usage-scope-row { grid-template-columns: 1fr 1fr; }
+    }
+  </style>
+</head>
+<body>
+<div class="page">
+
+  <div class="header">
+    <div>
+      <div class="header" style="background:none;padding:0;border-radius:0;">
+        <h1>Coworker API Test</h1>
+      </div>
+      <div class="subtitle">快速测试 REST 接口</div>
+    </div>
+  </div>
+
+  <!-- Server URL -->
+  <div class="card">
+    <div class="card-title">服务器地址</div>
+    <div class="card-body">
+      <div class="url-bar">
+        <label>Base URL</label>
+        <input id="baseUrl" type="text" value="http://localhost:8000" placeholder="http://localhost:8000" />
+      </div>
+    </div>
+  </div>
+
+  <!-- GET /status -->
+  <div class="card">
+    <div class="card-title">
+      <span><span class="badge badge-blue" style="margin-right:8px;">GET</span>/status</span>
+      <button class="btn btn-secondary btn-sm" id="statusBtn" onclick="fetchStatus()">刷新</button>
+    </div>
+    <div class="card-body">
+      <div id="statusGrid" class="status-grid" style="display:none;"></div>
+      <div id="usagePanel" class="usage-panel" style="display:none;"></div>
+      <div class="status-response-actions">
+        <button class="btn btn-secondary btn-sm" id="statusJsonToggle" onclick="toggleStatusJson()" aria-expanded="false">显示 JSON</button>
+      </div>
+      <div id="statusResp" class="response-box empty is-collapsed">点击「刷新」获取 Agent 状态</div>
+    </div>
+  </div>
+
+  <!-- Desktop release management -->
+  <div class="card">
+    <div class="card-title">
+      <span><span class="badge badge-green" style="margin-right:8px;">POST</span><span class="badge badge-blue">GET</span>&nbsp;/api/desktop-updates/releases</span>
+      <button class="btn btn-secondary btn-sm" onclick="listDesktopReleases()">刷新</button>
+    </div>
+    <div class="card-body">
+      <div class="form-row">
+        <div class="form-group">
+          <label>Admin token</label>
+          <input id="desktopReleaseToken" type="password" placeholder="DESKTOP_UPDATES__ADMIN_TOKEN" />
+        </div>
+        <div class="form-group">
+          <label>Version</label>
+          <input id="desktopReleaseVersion" type="text" placeholder="0.2.0" oninput="markDesktopReleaseVersionManual()" />
+        </div>
+      </div>
+      <div class="form-row">
+        <div class="form-group">
+          <label>Fallback platform</label>
+          <select id="desktopReleasePlatform" onchange="renderDesktopReleaseBatch()">
+            <option value="windows-x86_64">windows-x86_64</option>
+            <option value="darwin-x86_64">darwin-x86_64</option>
+            <option value="darwin-aarch64">darwin-aarch64</option>
+            <option value="linux-x86_64">linux-x86_64</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label>Manual signature fallback</label>
+          <input id="desktopReleaseSignature" type="text" placeholder="未选择 .sig 文件时使用" oninput="renderDesktopReleaseBatch()" />
+        </div>
+      </div>
+      <div class="form-group" style="margin-bottom:12px;">
+        <label>Notes</label>
+        <textarea id="desktopReleaseNotes" rows="2" placeholder="Release notes"></textarea>
+      </div>
+      <div class="form-group" style="margin-bottom:12px;">
+        <label>Updater assets and .sig files</label>
+        <label class="release-dropzone" id="desktopReleaseDropzone" for="desktopReleaseAsset">
+          <strong>拖入 updater、installer、.sig 或 GitHub artifact zip 来追加，或点击重新选择</strong>
+          <span>Zip 会自动展开并提取 release 文件；同名 .sig 会自动匹配 updater，多添加的文件可在下方移除。</span>
+          <input id="desktopReleaseAsset" type="file" multiple onchange="handleDesktopReleaseAssetChange(event)" />
+        </label>
+      </div>
+      <div id="desktopReleaseBatch" class="release-batch empty">可同时选择 updater 包、安装包、同名 `.sig` 文件，或 GitHub artifact zip；安装包不需要签名。</div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;">
+        <button class="btn btn-primary" onclick="createDesktopRelease()">创建 Release</button>
+        <button class="btn btn-secondary" onclick="uploadDesktopAsset()">上传识别到的 Assets</button>
+        <button class="btn btn-secondary" onclick="publishDesktopRelease()">Publish latest</button>
+        <button class="btn btn-secondary" onclick="rollbackDesktopRelease()">Rollback latest</button>
+        <button class="btn btn-secondary" onclick="listDesktopReleases()">刷新列表</button>
+      </div>
+      <div id="desktopReleaseResp" class="response-box empty">等待请求…</div>
+    </div>
+  </div>
+
+  <!-- GET /api/debug/tasks -->
+  <div class="card">
+    <div class="card-title">
+      <span><span class="badge badge-blue" style="margin-right:8px;">GET</span>/api/debug/tasks</span>
+      <button class="btn btn-secondary btn-sm" id="tasksBtn" onclick="fetchTasks()">刷新</button>
+    </div>
+    <div class="card-body">
+      <p style="color:#888;font-size:13px;margin:0 0 12px;">查看事件循环里仍存活的 asyncio task。<code>waiting_at</code> 指出每个 task 当前挂在哪一行 await——排查卡死 / 无法退出时一眼可见元凶。</p>
+      <div id="tasksList" style="display:none;"></div>
+      <div id="tasksResp" class="response-box empty">点击「刷新」查看运行中的任务</div>
+    </div>
+  </div>
+
+  <!-- POST /switch_model -->
+  <div class="card">
+    <div class="card-title">
+      <span><span class="badge badge-green" style="margin-right:8px;">POST</span>/switch_model</span>
+    </div>
+    <div class="card-body">
+      <div class="form-row">
+        <div class="form-group">
+          <label>Provider</label>
+          <input id="switchProvider" type="text" list="switchProviderOptions" value="anthropic" placeholder="provider 实例名" oninput="updateModelPlaceholder()" />
+          <datalist id="switchProviderOptions"></datalist>
+        </div>
+        <div class="form-group">
+          <label>Model ID（可选）</label>
+          <input id="switchModelId" type="text" placeholder="claude-sonnet-4-6" />
+        </div>
+      </div>
+      <button class="btn btn-primary" onclick="switchModel()">切换模型</button>
+      <div id="switchResp" class="response-box empty">等待请求…</div>
+    </div>
+  </div>
+
+  <!-- GET/PATCH /model_config -->
+  <div class="card">
+    <div class="card-title">
+      <span><span class="badge badge-blue" style="margin-right:8px;">GET</span><span class="badge badge-green">PATCH</span>&nbsp;/model_config</span>
+      <button class="btn btn-secondary btn-sm" id="modelConfigRefreshBtn" onclick="fetchModelConfig()">刷新</button>
+    </div>
+    <div class="card-body">
+      <div class="form-row">
+        <div class="form-group">
+          <label>Summary Provider</label>
+          <input id="summaryProvider" type="text" list="switchProviderOptions" placeholder="留空沿用主线 provider" />
+        </div>
+        <div class="form-group">
+          <label>Summary Model</label>
+          <input id="summaryModel" type="text" placeholder="留空使用 provider 默认模型" />
+        </div>
+      </div>
+      <div class="form-row">
+        <div class="form-group">
+          <label>Summary Thinking</label>
+          <select id="summaryThinking">
+            <option value="false">false</option>
+            <option value="true">true</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label>Fallbacks（每行一个）</label>
+          <textarea id="modelFallbacks" rows="3" placeholder="zhipu-userB&#10;deepseek/deepseek-chat"></textarea>
+        </div>
+      </div>
+      <div class="form-row">
+        <div class="form-group">
+          <label>Vision Provider</label>
+          <input id="visionProvider" type="text" list="switchProviderOptions" placeholder="留空时 visual_analyze 提示先配置" />
+        </div>
+        <div class="form-group">
+          <label>Vision Model</label>
+          <input id="visionModel" type="text" placeholder="claude-sonnet-4-6" />
+        </div>
+      </div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;">
+        <button class="btn btn-primary" onclick="saveModelConfig()">保存配置</button>
+        <button class="btn btn-secondary" onclick="fetchModelConfig()">刷新配置</button>
+      </div>
+      <div id="modelConfigResp" class="response-box empty">等待请求…</div>
+    </div>
+  </div>
+
+  <!-- POST /messages -->
+  <div class="card">
+    <div class="card-title">
+      <span><span class="badge badge-green" style="margin-right:8px;">POST</span>/messages</span>
+    </div>
+    <div class="card-body">
+      <div class="form-row">
+        <div class="form-group">
+          <label>Sender ID</label>
+          <input id="msgSenderId" type="text" value="api-test" />
+        </div>
+        <div class="form-group">
+          <label>conversation_id</label>
+          <input id="msgConversationId" type="text" placeholder="可选；同一 sender 下的会话" />
+        </div>
+      </div>
+      <div class="form-group" style="margin-bottom:12px;">
+        <label>Content</label>
+        <textarea id="msgContent" rows="3" placeholder="输入要发送的消息内容…"></textarea>
+      </div>
+      <button class="btn btn-primary" onclick="postMessage()">发送消息</button>
+      <div id="msgResp" class="response-box empty">等待请求…</div>
+    </div>
+  </div>
+
+  <!-- /api/communicate/register -->
+  <div class="card">
+    <div class="card-title">
+      <span><span class="badge badge-green" style="margin-right:8px;">POST</span><span class="badge badge-blue">GET</span>&nbsp;/api/communicate/register</span>
+      <button class="btn btn-secondary btn-sm" id="commListBtn" onclick="listCommunicateRegistrations()">刷新列表</button>
+    </div>
+    <div class="card-body">
+      <div class="form-row">
+        <div class="form-group">
+          <label>Kind</label>
+          <input id="commKind" type="text" value="coworker-desktop" />
+        </div>
+        <div class="form-group">
+          <label>Client ID</label>
+          <input id="commClientId" type="text" value="codex-local:cw_default" />
+        </div>
+      </div>
+      <div class="form-row">
+        <div class="form-group">
+          <label>Display name</label>
+          <input id="commDisplayName" type="text" value="Local CoWorker Desktop" />
+        </div>
+        <div class="form-group">
+          <label>Delete registration_id</label>
+          <input id="commDeleteId" type="text" placeholder="先刷新列表或注册后复制" />
+        </div>
+      </div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;">
+        <button class="btn btn-primary" onclick="registerCommunicate()">注册</button>
+        <button class="btn btn-secondary" onclick="listCommunicateRegistrations()">刷新列表</button>
+        <button class="btn btn-secondary" onclick="deleteCommunicateRegistration()">删除非活跃记录</button>
+      </div>
+      <div id="commResp" class="response-box empty">等待请求…</div>
+    </div>
+  </div>
+
+  <!-- WS/SSE receive -->
+  <div class="card">
+    <div class="card-title">
+      <span><span class="badge badge-blue" style="margin-right:8px;">WS</span><span class="badge badge-blue">SSE</span>&nbsp;receive</span>
+      <button class="btn btn-secondary btn-sm" onclick="clearReceiveFeed()">清空</button>
+    </div>
+    <div class="card-body">
+      <div class="form-row">
+        <div class="form-group">
+          <label>participant_id</label>
+          <input id="receiveParticipantId" type="text" value="api-test" />
+        </div>
+        <div class="form-group">
+          <label>Transport</label>
+          <select id="receiveTransport">
+            <option value="sse">SSE</option>
+            <option value="ws">WebSocket</option>
+          </select>
+        </div>
+      </div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;">
+        <button class="btn btn-primary" onclick="connectReceive()">连接</button>
+        <button class="btn btn-secondary" onclick="disconnectReceive()">断开</button>
+      </div>
+      <div id="receiveResp" class="response-box empty">连接后显示通过 communicate 推来的消息</div>
+      <div id="receiveFeed" class="inbound-feed"></div>
+    </div>
+  </div>
+
+  <!-- POST /backfill_tree -->
+  <div class="card">
+    <div class="card-title">
+      <span><span class="badge badge-green" style="margin-right:8px;">POST</span>/backfill_tree</span>
+    </div>
+    <div class="card-body">
+      <p style="color:#888;font-size:13px;margin:0 0 12px;">在线从原始日志全史重建多尺度记忆树（后台运行、不阻塞，完成后推送系统消息）。一次性操作，会消耗较多 LLM 调用。</p>
+      <div class="form-row">
+        <div class="form-group">
+          <label>max_leaves（叶子数上限）</label>
+          <input id="backfillMaxLeaves" type="number" value="64" min="1" />
+        </div>
+      </div>
+      <button class="btn btn-primary" onclick="backfillTree()">开始在线回溯</button>
+      <div id="backfillProgress" class="progress-wrap">
+        <div id="backfillProgressLabel" class="progress-label">回溯中…</div>
+        <div class="progress-track"><div id="backfillProgressFill" class="progress-fill"></div></div>
+      </div>
+      <div id="backfillResp" class="response-box empty">等待请求…</div>
+    </div>
+  </div>
+
+  <!-- 应急备份 -->
+  <div class="card">
+    <div class="card-title">
+      <span><span class="badge badge-blue" style="margin-right:8px;">GET</span>/backups&nbsp;·&nbsp;<span class="badge badge-green">POST</span>/backups/restore</span>
+      <button class="btn btn-secondary btn-sm" id="backupsBtn" onclick="listBackups()">刷新列表</button>
+    </div>
+    <div class="card-body">
+      <p style="color:#888;font-size:13px;margin:0 0 12px;">应急备份是 AgentLoop 连续错误时写入的完整短期记忆快照。full=整盘恢复 primary；summarize=摘要后经 inbox 注入。</p>
+      <div class="form-row">
+        <div class="form-group">
+          <label>备份文件</label>
+          <select id="restoreFilename"><option value="">（先刷新列表）</option></select>
+        </div>
+        <div class="form-group">
+          <label>恢复模式</label>
+          <select id="restoreMode">
+            <option value="full">full（整盘替换）</option>
+            <option value="summarize">summarize（摘要注入）</option>
+          </select>
+        </div>
+      </div>
+      <button class="btn btn-primary" onclick="restoreBackup()">恢复</button>
+      <div id="backupsResp" class="response-box empty">点击「刷新列表」查看可用备份</div>
+    </div>
+  </div>
+
+</div>
+
+<script>
+  const MODEL_HINTS = {
+    anthropic: 'claude-sonnet-4-6',
+    openai:    'gpt-4o',
+    deepseek:  'deepseek-chat',
+    qwen:      'qwen-turbo',
+    zhipu:     'glm-4',
+    minimax:   'MiniMax-M3',
+  };
+  const DEFAULT_PROVIDER_OPTIONS = ['anthropic', 'openai', 'deepseek', 'qwen', 'zhipu', 'minimax'];
+  let usageExpanded = false;
+  let latestUsageStats = null;
+  let statusJsonExpanded = false;
+  let receiveWs = null;
+  let receiveEs = null;
+
+  function toggleUsageStats() {
+    usageExpanded = !usageExpanded;
+    renderUsageStats(latestUsageStats);
+  }
+
+  function setStatusJsonExpanded(expanded) {
+    statusJsonExpanded = expanded;
+    const resp = document.getElementById('statusResp');
+    const toggle = document.getElementById('statusJsonToggle');
+    resp.classList.toggle('is-collapsed', !expanded);
+    toggle.textContent = expanded ? '隐藏 JSON' : '显示 JSON';
+    toggle.setAttribute('aria-expanded', expanded ? 'true' : 'false');
+  }
+
+  function toggleStatusJson() {
+    setStatusJsonExpanded(!statusJsonExpanded);
+  }
+
+  function base() {
+    return document.getElementById('baseUrl').value.replace(/\/$/, '');
+  }
+
+  function wsBase() {
+    return base().replace(/^http/i, 'ws');
+  }
+
+  function updateModelPlaceholder() {
+    const p = document.getElementById('switchProvider').value.trim();
+    const providerType = p.split('-')[0];
+    document.getElementById('switchModelId').placeholder = MODEL_HINTS[p] || MODEL_HINTS[providerType] || '留空使用 provider 默认模型';
+  }
+
+  function renderProviderOptions(providers = []) {
+    const options = Array.from(new Set([...providers, ...DEFAULT_PROVIDER_OPTIONS])).filter(Boolean);
+    document.getElementById('switchProviderOptions').innerHTML = options
+      .map(provider => `<option value="${escapeHtml(provider)}"></option>`)
+      .join('');
+  }
+
+  function setResp(id, data, ok) {
+    const el = document.getElementById(id);
+    el.className = 'response-box ' + (ok ? 'success' : 'error');
+    el.textContent = JSON.stringify(data, null, 2);
+  }
+
+  function setLoading(id, msg) {
+    const el = document.getElementById(id);
+    el.className = 'response-box empty';
+    el.innerHTML = `<span class="spinner"></span>${msg}`;
+  }
+
+  function receivePayload(raw) {
+    try {
+      const payload = JSON.parse(raw);
+      if (payload && typeof payload === 'object'
+          && ('message' in payload || 'attachments' in payload)) {
+        return {
+          message: payload.message || '',
+          participant_id: payload.participant_id || '',
+          conversation_id: payload.conversation_id || '',
+          attachments: Array.isArray(payload.attachments) ? payload.attachments : [],
+        };
+      }
+    } catch (e) {
+      // Plain text is valid for duplicate-connection notices and manual WS sends.
+    }
+    return { message: raw, participant_id: '', conversation_id: '', attachments: [] };
+  }
+
+  function attachmentDataUrl(att) {
+    if (att.dataUrl) return att.dataUrl;
+    if (!att.data) return '';
+    return `data:${att.media_type || 'application/octet-stream'};base64,${att.data}`;
+  }
+
+  function renderReceive(raw, transport) {
+    const payload = receivePayload(raw);
+    const feed = document.getElementById('receiveFeed');
+    const item = document.createElement('div');
+    item.className = 'inbound-item';
+
+    const meta = document.createElement('div');
+    meta.className = 'inbound-meta';
+    const parts = [
+      new Date().toLocaleTimeString('zh-CN'),
+      transport.toUpperCase(),
+      payload.participant_id ? `from ${payload.participant_id}` : '',
+      payload.conversation_id ? `conversation ${payload.conversation_id}` : '',
+    ].filter(Boolean);
+    meta.textContent = parts.join(' · ');
+    item.appendChild(meta);
+
+    if (payload.message) {
+      const text = document.createElement('div');
+      text.className = 'inbound-text';
+      text.textContent = payload.message;
+      item.appendChild(text);
+    }
+
+    if (payload.attachments.length) {
+      const attachments = document.createElement('div');
+      attachments.className = 'inbound-attachments';
+      payload.attachments.forEach(att => {
+        const filename = att.filename || att.path || 'attachment';
+        const dataUrl = attachmentDataUrl(att);
+        if (att.media_type && att.media_type.startsWith('image/') && dataUrl) {
+          const img = document.createElement('img');
+          img.src = dataUrl;
+          img.alt = filename;
+          attachments.appendChild(img);
+          return;
+        }
+        const link = document.createElement(dataUrl ? 'a' : 'span');
+        link.className = 'inbound-file';
+        link.textContent = `📄 ${filename}`;
+        if (dataUrl) {
+          link.href = dataUrl;
+          link.download = filename;
+        }
+        attachments.appendChild(link);
+      });
+      item.appendChild(attachments);
+    }
+
+    feed.prepend(item);
+  }
+
+  function connectReceive() {
+    const participantId = document.getElementById('receiveParticipantId').value.trim();
+    const transport = document.getElementById('receiveTransport').value;
+    if (!participantId) {
+      alert('请填写 participant_id');
+      return;
+    }
+    disconnectReceive(false);
+    setResp('receiveResp', { status: 'connecting', participant_id: participantId, transport }, true);
+    if (transport === 'sse') {
+      receiveEs = new EventSource(`${base()}/sse/${encodeURIComponent(participantId)}`);
+      receiveEs.onopen = () => setResp(
+        'receiveResp',
+        { status: 'connected', participant_id: participantId, transport },
+        true
+      );
+      receiveEs.onmessage = e => renderReceive(e.data, transport);
+      receiveEs.onerror = () => setResp(
+        'receiveResp',
+        { status: 'disconnected_or_retrying', participant_id: participantId, transport },
+        false
+      );
+      return;
+    }
+    receiveWs = new WebSocket(`${wsBase()}/ws/${encodeURIComponent(participantId)}`);
+    receiveWs.onopen = () => setResp(
+      'receiveResp',
+      { status: 'connected', participant_id: participantId, transport },
+      true
+    );
+    receiveWs.onmessage = e => renderReceive(e.data, transport);
+    receiveWs.onclose = () => setResp(
+      'receiveResp',
+      { status: 'disconnected', participant_id: participantId, transport },
+      false
+    );
+    receiveWs.onerror = () => setResp(
+      'receiveResp',
+      { status: 'error', participant_id: participantId, transport },
+      false
+    );
+  }
+
+  function disconnectReceive(updateStatus = true) {
+    if (receiveWs) {
+      receiveWs.onclose = null;
+      receiveWs.close();
+      receiveWs = null;
+    }
+    if (receiveEs) {
+      receiveEs.onerror = null;
+      receiveEs.close();
+      receiveEs = null;
+    }
+    if (updateStatus) {
+      setResp('receiveResp', { status: 'disconnected' }, false);
+    }
+  }
+
+  function clearReceiveFeed() {
+    document.getElementById('receiveFeed').innerHTML = '';
+  }
+
+  async function fetchStatus() {
+    const btn = document.getElementById('statusBtn');
+    btn.disabled = true;
+    setLoading('statusResp', '请求中…');
+    setStatusJsonExpanded(true);
+    document.getElementById('statusGrid').style.display = 'none';
+    document.getElementById('usagePanel').style.display = 'none';
+    try {
+      const res = await fetch(base() + '/status');
+      const data = await res.json();
+      renderStatus(data);
+      setResp('statusResp', data, res.ok);
+      setStatusJsonExpanded(!res.ok);
+    } catch (e) {
+      setResp('statusResp', { error: e.message }, false);
+      setStatusJsonExpanded(true);
+    } finally {
+      btn.disabled = false;
+    }
+  }
+
+  function desktopReleaseHeaders() {
+    const token = document.getElementById('desktopReleaseToken').value.trim();
+    return token ? { Authorization: `Bearer ${token}` } : {};
+  }
+
+  let desktopReleaseAutoVersion = '';
+
+  function desktopReleaseVersion() {
+    return document.getElementById('desktopReleaseVersion').value.trim();
+  }
+
+  function markDesktopReleaseVersionManual() {
+    desktopReleaseAutoVersion = '';
+    renderDesktopReleaseBatch();
+  }
+
+  function desktopReleaseFiles() {
+    return Array.from(document.getElementById('desktopReleaseAsset').files || []);
+  }
+
+  function desktopReleaseBasename(path) {
+    return String(path || '').split(/[\\/]/).filter(Boolean).pop() || '';
+  }
+
+  function isDesktopZipFile(file) {
+    return /\.zip$/i.test(file.name);
+  }
+
+  function isDesktopReleaseFileName(name) {
+    return (
+      /\.sig$/i.test(name) ||
+      /\.app\.tar\.gz$/i.test(name) ||
+      /\.(exe|dmg|appimage|deb|rpm|msi)$/i.test(name)
+    );
+  }
+
+  function readZipUInt16(view, offset) {
+    return view.getUint16(offset, true);
+  }
+
+  function readZipUInt32(view, offset) {
+    return view.getUint32(offset, true);
+  }
+
+  function decodeZipText(bytes) {
+    const decoder = new TextDecoder('utf-8');
+    return decoder.decode(bytes);
+  }
+
+  function zipDosDateToTime(date, time) {
+    const year = ((date >> 9) & 0x7f) + 1980;
+    const month = ((date >> 5) & 0x0f) - 1;
+    const day = date & 0x1f;
+    const hour = (time >> 11) & 0x1f;
+    const minute = (time >> 5) & 0x3f;
+    const second = (time & 0x1f) * 2;
+    const ts = new Date(year, month, day, hour, minute, second).getTime();
+    return Number.isNaN(ts) ? Date.now() : ts;
+  }
+
+  function findZipEndOfCentralDirectory(view) {
+    const minOffset = Math.max(0, view.byteLength - 22 - 0xffff);
+    for (let offset = view.byteLength - 22; offset >= minOffset; offset -= 1) {
+      if (readZipUInt32(view, offset) === 0x06054b50) return offset;
+    }
+    return -1;
+  }
+
+  async function inflateZipEntry(bytes) {
+    if (typeof DecompressionStream === 'undefined') {
+      throw new Error('当前浏览器不支持解压 zip deflate 内容，请先手工解压后再拖入文件。');
+    }
+    const stream = new Blob([bytes]).stream().pipeThrough(new DecompressionStream('deflate-raw'));
+    return new Response(stream).arrayBuffer();
+  }
+
+  async function extractDesktopReleaseZip(file) {
+    const buffer = await file.arrayBuffer();
+    const view = new DataView(buffer);
+    const eocdOffset = findZipEndOfCentralDirectory(view);
+    if (eocdOffset < 0) throw new Error(`${file.name} 不是有效的 zip 文件`);
+
+    const entryCount = readZipUInt16(view, eocdOffset + 10);
+    const centralDirOffset = readZipUInt32(view, eocdOffset + 16);
+    const extracted = [];
+    let offset = centralDirOffset;
+
+    for (let index = 0; index < entryCount; index += 1) {
+      if (readZipUInt32(view, offset) !== 0x02014b50) {
+        throw new Error(`${file.name} 的 zip 目录结构异常`);
+      }
+
+      const flags = readZipUInt16(view, offset + 8);
+      const method = readZipUInt16(view, offset + 10);
+      const modTime = readZipUInt16(view, offset + 12);
+      const modDate = readZipUInt16(view, offset + 14);
+      const compressedSize = readZipUInt32(view, offset + 20);
+      const uncompressedSize = readZipUInt32(view, offset + 24);
+      const nameLength = readZipUInt16(view, offset + 28);
+      const extraLength = readZipUInt16(view, offset + 30);
+      const commentLength = readZipUInt16(view, offset + 32);
+      const localHeaderOffset = readZipUInt32(view, offset + 42);
+      const nameBytes = new Uint8Array(buffer, offset + 46, nameLength);
+      const entryName = decodeZipText(nameBytes);
+      offset += 46 + nameLength + extraLength + commentLength;
+
+      if (!entryName || entryName.endsWith('/') || !isDesktopReleaseFileName(entryName)) continue;
+      if (flags & 0x0001) throw new Error(`${entryName} 是加密文件，无法在浏览器中读取`);
+      if (compressedSize === 0xffffffff || uncompressedSize === 0xffffffff) {
+        throw new Error(`${entryName} 使用 Zip64，当前页面暂不支持`);
+      }
+      if (readZipUInt32(view, localHeaderOffset) !== 0x04034b50) {
+        throw new Error(`${entryName} 的本地文件头异常`);
+      }
+
+      const localNameLength = readZipUInt16(view, localHeaderOffset + 26);
+      const localExtraLength = readZipUInt16(view, localHeaderOffset + 28);
+      const dataOffset = localHeaderOffset + 30 + localNameLength + localExtraLength;
+      const compressed = buffer.slice(dataOffset, dataOffset + compressedSize);
+      let content;
+      if (method === 0) {
+        content = compressed;
+      } else if (method === 8) {
+        content = await inflateZipEntry(compressed);
+      } else {
+        throw new Error(`${entryName} 使用了不支持的 zip 压缩方法：${method}`);
+      }
+
+      const name = desktopReleaseBasename(entryName);
+      const extractedFile = new File([content], name, {
+        type: 'application/octet-stream',
+        lastModified: zipDosDateToTime(modDate, modTime),
+      });
+      Object.defineProperties(extractedFile, {
+        desktopReleaseEntryName: { value: entryName },
+        desktopReleaseArchiveName: { value: file.name },
+      });
+      extracted.push(extractedFile);
+    }
+
+    return extracted;
+  }
+
+  async function expandDesktopReleaseFiles(files) {
+    const expanded = [];
+    const zipSummaries = [];
+    const errors = [];
+
+    for (const file of Array.from(files || [])) {
+      if (!isDesktopZipFile(file)) {
+        expanded.push(file);
+        continue;
+      }
+      try {
+        const extracted = await extractDesktopReleaseZip(file);
+        zipSummaries.push({ name: file.name, count: extracted.length });
+        expanded.push(...extracted);
+      } catch (error) {
+        errors.push(`${file.name}: ${error.message}`);
+      }
+    }
+
+    return { files: expanded, zipSummaries, errors };
+  }
+
+  async function handleDesktopReleaseAssetChange(event) {
+    await setDesktopReleaseFiles(event.target.files, { expandZip: true });
+  }
+
+  async function setDesktopReleaseFiles(files, options = {}) {
+    const input = document.getElementById('desktopReleaseAsset');
+    if (typeof DataTransfer === 'undefined') {
+      alert('当前浏览器不支持拖拽写入文件列表，请点击选择文件。');
+      return false;
+    }
+    const incoming = options.expandZip
+      ? await expandDesktopReleaseFiles(files)
+      : { files: Array.from(files || []), zipSummaries: [], errors: [] };
+    const dt = new DataTransfer();
+    const nextFiles = options.append
+      ? desktopReleaseFiles().concat(incoming.files)
+      : incoming.files;
+    nextFiles.forEach((file) => dt.items.add(file));
+    input.files = dt.files;
+    renderDesktopReleaseBatch();
+    if (incoming.zipSummaries.length || incoming.errors.length) {
+      setResp('desktopReleaseResp', {
+        expanded_zips: incoming.zipSummaries,
+        errors: incoming.errors,
+        selected_files: nextFiles.map((file) => file.name),
+      }, incoming.errors.length === 0);
+    }
+    if (incoming.errors.length) alert(`有 zip 未能展开：\n${incoming.errors.join('\n')}`);
+    return true;
+  }
+
+  async function removeDesktopReleaseFile(index) {
+    const removeIndexes = new Set([index]);
+    const row = buildDesktopReleaseBatch().find((item) => item.fileIndex === index);
+    if (row && row.kind === 'updater' && row.signatureFileIndex >= 0) {
+      removeIndexes.add(row.signatureFileIndex);
+    }
+    await setDesktopReleaseFiles(desktopReleaseFiles().filter((_, fileIndex) => !removeIndexes.has(fileIndex)));
+  }
+
+  function setupDesktopReleaseDropzone() {
+    const dropzone = document.getElementById('desktopReleaseDropzone');
+    if (!dropzone) return;
+    const stop = (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+    };
+    ['dragenter', 'dragover'].forEach((type) => {
+      dropzone.addEventListener(type, (event) => {
+        stop(event);
+        dropzone.classList.add('dragging');
+        if (event.dataTransfer) event.dataTransfer.dropEffect = 'copy';
+      });
+    });
+    ['dragleave', 'dragend', 'drop'].forEach((type) => {
+      dropzone.addEventListener(type, (event) => {
+        stop(event);
+        if (type !== 'dragend' || event.currentTarget === dropzone) {
+          dropzone.classList.remove('dragging');
+        }
+      });
+    });
+    dropzone.addEventListener('drop', async (event) => {
+      const files = event.dataTransfer ? event.dataTransfer.files : [];
+      if (files && files.length) await setDesktopReleaseFiles(files, { append: true, expandZip: true });
+    });
+  }
+
+  function isDesktopSigFile(file) {
+    return /\.sig$/i.test(file.name);
+  }
+
+  function stripDesktopSigSuffix(name) {
+    return name.replace(/\.sig$/i, '');
+  }
+
+  function desktopReleaseSignatureMatchKeys(file) {
+    const archiveName = file && file.desktopReleaseArchiveName ? file.desktopReleaseArchiveName : '';
+    const rawKeys = [];
+    if (file && file.desktopReleaseEntryName) {
+      rawKeys.push(`${archiveName}\n${stripDesktopSigSuffix(file.desktopReleaseEntryName)}`);
+      rawKeys.push(stripDesktopSigSuffix(file.desktopReleaseEntryName));
+    }
+    if (file && file.name) {
+      rawKeys.push(`${archiveName}\n${stripDesktopSigSuffix(file.name)}`);
+      rawKeys.push(stripDesktopSigSuffix(file.name));
+    }
+    return Array.from(new Set(rawKeys.filter(Boolean).map((key) => key.toLowerCase())));
+  }
+
+  function addDesktopReleaseSignatureFile(sigFiles, file, fileIndex) {
+    for (const key of desktopReleaseSignatureMatchKeys(file)) {
+      if (!sigFiles.has(key)) sigFiles.set(key, []);
+      sigFiles.get(key).push({ file, fileIndex });
+    }
+  }
+
+  function findDesktopReleaseSignatureFile(sigFiles, file) {
+    for (const key of desktopReleaseSignatureMatchKeys(file)) {
+      const matches = sigFiles.get(key) || [];
+      if (matches.length === 1) return matches[0];
+    }
+    return null;
+  }
+
+  function inferDesktopVersionsFromName(name) {
+    const source = stripDesktopSigSuffix(name);
+    const versions = [];
+    const re = /(?:^|[^0-9A-Za-z])v?((?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*))(?=$|[^0-9A-Za-z])/g;
+    let match;
+    while ((match = re.exec(source)) !== null) {
+      versions.push(match[1]);
+    }
+    return versions;
+  }
+
+  function desktopReleaseVersionCandidates() {
+    const versions = new Set();
+    for (const file of desktopReleaseFiles()) {
+      for (const version of inferDesktopVersionsFromName(file.name)) {
+        versions.add(version);
+      }
+    }
+    return Array.from(versions).sort();
+  }
+
+  function syncDesktopReleaseVersionFromFiles() {
+    const input = document.getElementById('desktopReleaseVersion');
+    const versions = desktopReleaseVersionCandidates();
+    const current = input.value.trim();
+    if (versions.length === 1 && (!current || current === desktopReleaseAutoVersion)) {
+      input.value = versions[0];
+      desktopReleaseAutoVersion = versions[0];
+    } else if (versions.length !== 1 && current === desktopReleaseAutoVersion) {
+      input.value = '';
+      desktopReleaseAutoVersion = '';
+    }
+    return versions;
+  }
+
+  function validateDesktopReleaseVersionMatchesFiles() {
+    const versions = desktopReleaseVersionCandidates();
+    if (!desktopReleaseFiles().length || !versions.length) return true;
+    if (versions.length > 1) {
+      alert(`选择的文件里识别到多个版本：${versions.join(', ')}。请只选择同一个版本的包。`);
+      renderDesktopReleaseBatch();
+      return false;
+    }
+    const version = desktopReleaseVersion();
+    if (version && version !== versions[0]) {
+      alert(`版本号不一致：表单是 ${version}，文件名里是 ${versions[0]}。`);
+      return false;
+    }
+    return true;
+  }
+
+  function desktopReleaseFileContext(file) {
+    return [
+      file && file.name,
+      file && file.desktopReleaseEntryName,
+      file && file.desktopReleaseArchiveName,
+    ].filter(Boolean).join(' ');
+  }
+
+  function inferDesktopPlatform(file) {
+    const context = desktopReleaseFileContext(file).toLowerCase();
+    const compact = context.replace(/[\s._-]+/g, '');
+    const isArm = /aarch64|arm64|applesilicon/.test(compact);
+    const isX64 = /x64|x8664|amd64|intel/.test(compact);
+    const isMac = /darwin|macos|mac|appledarwin/.test(compact);
+
+    const inferMac = () => {
+      if (isArm) return 'darwin-aarch64';
+      if (isX64) return 'darwin-x86_64';
+      return '';
+    };
+
+    if (/\.dmg$/i.test(file.name)) {
+      return inferMac();
+    }
+    if (/\.(deb|rpm)$/i.test(file.name)) {
+      return isArm ? 'linux-aarch64' : 'linux-x86_64';
+    }
+    if (/\.msi$/i.test(file.name)) {
+      return isArm ? 'windows-aarch64' : 'windows-x86_64';
+    }
+    if (/\.app\.tar\.gz$/i.test(file.name) || (/\.tar\.gz$/i.test(file.name) && isMac)) {
+      return inferMac();
+    }
+    if (/\.appimage$/i.test(file.name) || (/linux/.test(compact) && !/\.(deb|rpm)$/i.test(file.name))) {
+      return isArm ? 'linux-aarch64' : 'linux-x86_64';
+    }
+    if (/\.exe$/i.test(file.name) || /windows|win32|win64|nsis|setup/.test(compact)) {
+      return isArm ? 'windows-aarch64' : (isX64 ? 'windows-x86_64' : 'windows-x86_64');
+    }
+    return '';
+  }
+
+  function inferDesktopAssetKind(file) {
+    return /\.(dmg|deb|rpm|msi)$/i.test(file.name) ? 'installer' : 'updater';
+  }
+
+  function buildDesktopReleaseBatch() {
+    const files = desktopReleaseFiles();
+    const manualSignature = document.getElementById('desktopReleaseSignature').value.trim();
+    const fallbackPlatform = document.getElementById('desktopReleasePlatform').value;
+    const sigFiles = new Map();
+    const assets = [];
+
+    files.forEach((file, fileIndex) => {
+      if (isDesktopSigFile(file)) {
+        addDesktopReleaseSignatureFile(sigFiles, file, fileIndex);
+      } else {
+        assets.push({ file, fileIndex });
+      }
+    });
+
+    const platformCounts = {};
+    const rows = assets.map(({ file, fileIndex }) => {
+      let platform = inferDesktopPlatform(file);
+      const kind = inferDesktopAssetKind(file);
+      const usesFallback = !platform && assets.length === 1;
+      if (usesFallback) platform = fallbackPlatform;
+      const countKey = platform ? `${kind}:${platform}` : '';
+      if (countKey) platformCounts[countKey] = (platformCounts[countKey] || 0) + 1;
+      const signatureMatch = findDesktopReleaseSignatureFile(sigFiles, file);
+      return {
+        file,
+        fileIndex,
+        kind,
+        platform,
+        usesFallback,
+        signatureFile: signatureMatch ? signatureMatch.file : null,
+        signatureFileIndex: signatureMatch ? signatureMatch.fileIndex : -1,
+        manualSignature,
+      };
+    });
+
+    for (const row of rows) {
+      row.duplicate = row.platform && platformCounts[`${row.kind}:${row.platform}`] > 1;
+      row.hasSignature = row.kind === 'installer' || Boolean(row.signatureFile || row.manualSignature);
+      row.uploadable = Boolean(row.platform && row.hasSignature && !row.duplicate);
+    }
+    return rows;
+  }
+
+  function desktopReleaseBatchPlatforms() {
+    const rows = buildDesktopReleaseBatch().filter((row) => row.kind === 'updater' && row.platform && !row.duplicate);
+    const platforms = Array.from(new Set(rows.map((row) => row.platform)));
+    if (desktopReleaseFiles().length) return platforms;
+    return [document.getElementById('desktopReleasePlatform').value];
+  }
+
+  function desktopReleaseRowState(row) {
+    if (!row.platform) return '<span class="badge badge-red">unknown</span>';
+    if (row.duplicate) return '<span class="badge badge-red">duplicate</span>';
+    if (row.kind === 'installer') return '<span class="badge badge-green">installer</span>';
+    if (!row.hasSignature) return '<span class="badge badge-red">missing sig</span>';
+    if (!row.signatureFile) return '<span class="badge badge-amber">manual sig</span>';
+    return '<span class="badge badge-blue">updater</span>';
+  }
+
+  function renderDesktopReleaseRows(rows) {
+    if (!rows.length) {
+      return '<div class="release-batch-empty-kind">未选择此类文件</div>';
+    }
+    return rows.map((row) => `
+      <div class="release-batch-row">
+        <div class="release-batch-fileline">
+          <div class="release-batch-name" title="${escapeHtml(row.file.name)}">${escapeHtml(row.file.name)}</div>
+          <button class="release-file-remove" type="button" onclick="removeDesktopReleaseFile(${row.fileIndex})" aria-label="移除 ${escapeHtml(row.file.name)}">移除</button>
+        </div>
+        <div class="release-batch-meta">
+          <span class="release-batch-platform">${escapeHtml(row.platform || '—')}</span>
+          <span class="release-batch-state">${desktopReleaseRowState(row)}</span>
+          ${row.signatureFile ? `
+            <span class="release-batch-state">sig: ${escapeHtml(row.signatureFile.name)}</span>
+            <button class="release-file-remove" type="button" onclick="removeDesktopReleaseFile(${row.signatureFileIndex})" aria-label="移除 ${escapeHtml(row.signatureFile.name)}">移除 sig</button>
+          ` : ''}
+        </div>
+      </div>
+    `).join('');
+  }
+
+  function desktopReleaseOrphanSignatureRows(assetRows) {
+    const matchedSignatureIndexes = new Set(
+      assetRows
+        .map((row) => row.signatureFileIndex)
+        .filter((index) => index >= 0)
+    );
+    return desktopReleaseFiles()
+      .map((file, fileIndex) => ({ file, fileIndex }))
+      .filter((row) => isDesktopSigFile(row.file) && !matchedSignatureIndexes.has(row.fileIndex));
+  }
+
+  function renderDesktopReleaseSignatureRows(rows) {
+    if (!rows.length) return '';
+    return rows.map((row) => `
+      <div class="release-batch-row">
+        <div class="release-batch-fileline">
+          <div class="release-batch-name" title="${escapeHtml(row.file.name)}">${escapeHtml(row.file.name)}</div>
+          <button class="release-file-remove" type="button" onclick="removeDesktopReleaseFile(${row.fileIndex})" aria-label="移除 ${escapeHtml(row.file.name)}">移除</button>
+        </div>
+        <div class="release-batch-meta">
+          <span class="release-batch-platform">.sig</span>
+          <span class="badge badge-amber">unmatched</span>
+        </div>
+      </div>
+    `).join('');
+  }
+
+  function renderDesktopReleaseBatch() {
+    const box = document.getElementById('desktopReleaseBatch');
+    const versions = syncDesktopReleaseVersionFromFiles();
+    const rows = buildDesktopReleaseBatch();
+    const orphanSignatureRows = desktopReleaseOrphanSignatureRows(rows);
+    if (!desktopReleaseFiles().length) {
+      box.className = 'release-batch empty';
+      box.textContent = '可同时选择 updater 包、安装包、同名 `.sig` 文件，或 GitHub artifact zip；安装包不需要签名。';
+      return;
+    }
+    box.className = 'release-batch';
+    const versionNote = versions.length > 1
+      ? `<div class="release-batch-note error">版本冲突：${escapeHtml(versions.join(', '))}</div>`
+      : versions.length === 1
+        ? `<div class="release-batch-note">识别版本：${escapeHtml(versions[0])}</div>`
+        : `<div class="release-batch-note error">未从文件名识别到版本，请手动填写 Version。</div>`;
+    const updaterRows = rows.filter((row) => row.kind === 'updater');
+    const installerRows = rows.filter((row) => row.kind === 'installer');
+    box.innerHTML = versionNote + `
+      <div class="release-batch-groups">
+        <div class="release-batch-group updater">
+          <div class="release-batch-group-head">
+            <div>
+              <strong>Updater 自动更新包</strong>
+              <small>进入 latest.json，桌面端自动检查并安装；必须配同名 .sig。</small>
+            </div>
+            <span class="release-batch-count">${updaterRows.length} file${updaterRows.length === 1 ? '' : 's'}</span>
+          </div>
+          ${renderDesktopReleaseRows(updaterRows)}
+          ${renderDesktopReleaseSignatureRows(orphanSignatureRows)}
+        </div>
+        <div class="release-batch-group installer">
+          <div class="release-batch-group-head">
+            <div>
+              <strong>Installer 安装包</strong>
+              <small>只随 release 保存，方便首次安装或手动重装；不会进入 latest.json。</small>
+            </div>
+            <span class="release-batch-count">${installerRows.length} file${installerRows.length === 1 ? '' : 's'}</span>
+          </div>
+          ${renderDesktopReleaseRows(installerRows)}
+        </div>
+      </div>
+    `;
+  }
+
+  async function createDesktopRelease() {
+    if (!validateDesktopReleaseVersionMatchesFiles()) return;
+    const version = desktopReleaseVersion();
+    if (!version) return alert('请填写版本号');
+    setLoading('desktopReleaseResp', '创建中…');
+    try {
+      const res = await fetch(base() + '/api/desktop-updates/releases', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...desktopReleaseHeaders() },
+        body: JSON.stringify({
+          version,
+          notes: document.getElementById('desktopReleaseNotes').value,
+        }),
+      });
+      const data = await res.json();
+      setResp('desktopReleaseResp', data, res.ok);
+    } catch (e) {
+      setResp('desktopReleaseResp', { error: e.message }, false);
+    }
+  }
+
+  async function uploadDesktopAsset() {
+    if (!validateDesktopReleaseVersionMatchesFiles()) return;
+    const version = desktopReleaseVersion();
+    const rows = buildDesktopReleaseBatch();
+    if (!version) return alert('请填写版本号');
+    if (!desktopReleaseFiles().length) return alert('请选择 updater asset 文件');
+    const blockers = rows.filter((row) => !row.uploadable);
+    if (blockers.length) {
+      renderDesktopReleaseBatch();
+      return alert('还有未识别平台、重复平台或缺少签名的文件，请先处理预览里的红色项');
+    }
+    const uploadable = rows.filter((row) => row.uploadable);
+    if (!uploadable.length) return alert('没有可上传的 updater asset');
+    setLoading('desktopReleaseResp', `上传 ${uploadable.length} 个 asset 中…`);
+    const results = [];
+    for (const row of uploadable) {
+      try {
+        const signature = row.signatureFile ? (await row.signatureFile.text()).trim() : row.manualSignature;
+        const data = await uploadDesktopAssetFile(version, row.platform, row.kind, signature, row.file);
+        results.push({ platform: row.platform, kind: row.kind, file: row.file.name, ok: data.ok, status: data.status, response: data.body });
+      } catch (e) {
+        results.push({ platform: row.platform, kind: row.kind, file: row.file.name, ok: false, error: e.message });
+      }
+    }
+    setResp('desktopReleaseResp', { uploaded: results.filter((item) => item.ok).length, results }, results.every((item) => item.ok));
+  }
+
+  async function uploadDesktopAssetFile(version, platform, kind, signature, file) {
+    const form = new FormData();
+    form.set('platform', platform);
+    form.set('signature', signature);
+    form.set('kind', kind);
+    form.set('file', file);
+    const res = await fetch(base() + `/api/desktop-updates/releases/${encodeURIComponent(version)}/assets`, {
+      method: 'POST',
+      headers: desktopReleaseHeaders(),
+      body: form,
+    });
+    const text = await res.text();
+    let body = text;
+    try { body = text ? JSON.parse(text) : null; } catch (_) {}
+    return { ok: res.ok, status: res.status, body };
+  }
+
+  async function publishDesktopRelease() {
+    await publishOrRollbackDesktopRelease('publish');
+  }
+
+  async function rollbackDesktopRelease() {
+    await publishOrRollbackDesktopRelease('rollback');
+  }
+
+  async function publishOrRollbackDesktopRelease(action) {
+    const version = desktopReleaseVersion();
+    if (!version) return alert('请填写版本号');
+    const platforms = desktopReleaseBatchPlatforms();
+    if (desktopReleaseFiles().length && !platforms.length) {
+      return alert('当前选择的文件里没有 updater 包；Publish/Rollback 只针对自动更新包，安装包会随 release 保存但不进入 latest.json');
+    }
+    setLoading('desktopReleaseResp', `${action} 中…`);
+    try {
+      const res = await fetch(base() + `/api/desktop-updates/releases/${encodeURIComponent(version)}/${action}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...desktopReleaseHeaders() },
+        body: JSON.stringify({ platforms }),
+      });
+      const data = await res.json();
+      setResp('desktopReleaseResp', data, res.ok);
+    } catch (e) {
+      setResp('desktopReleaseResp', { error: e.message }, false);
+    }
+  }
+
+  async function listDesktopReleases() {
+    setLoading('desktopReleaseResp', '请求中…');
+    try {
+      const res = await fetch(base() + '/api/desktop-updates/releases', {
+        headers: desktopReleaseHeaders(),
+      });
+      const data = await res.json();
+      setResp('desktopReleaseResp', data, res.ok);
+    } catch (e) {
+      setResp('desktopReleaseResp', { error: e.message }, false);
+    }
+  }
+
+  function renderStatus(data) {
+    const grid = document.getElementById('statusGrid');
+    if (!data || data.status === 'not_started') {
+      grid.style.display = 'none';
+      document.getElementById('usagePanel').style.display = 'none';
+      return;
+    }
+    renderProviderOptions(Array.isArray(data.providers) ? data.providers : []);
+    if (data.model_config) {
+      renderModelConfig(data.model_config);
+    }
+    const providerInput = document.getElementById('switchProvider');
+    if (!providerInput.value.trim() && data.provider) {
+      providerInput.value = data.provider;
+      updateModelPlaceholder();
+    }
+    const items = [
+      { label: 'Running',     value: boolBadge(data.is_running) },
+      { label: 'Sleeping',    value: boolBadge(data.is_sleeping, true) },
+      { label: 'Canary',      value: boolBadge(data.is_canary) },
+      { label: 'Provider',    value: `<span class="badge badge-blue">${data.provider ?? '—'}</span>` },
+      { label: 'Model',       value: `<span style="font-family:monospace;font-size:13px;">${data.model ?? '—'}</span>` },
+      { label: 'Cycle Count', value: data.cycle_count ?? '—' },
+    ];
+    grid.innerHTML = items.map(i => `
+      <div class="status-item">
+        <div class="label">${i.label}</div>
+        <div class="value">${i.value}</div>
+      </div>
+    `).join('');
+    grid.style.display = 'grid';
+    renderUsageStats(data.usage_stats);
+  }
+
+  function formatSmartNumber(value) {
+    const n = Number(value || 0);
+    const abs = Math.abs(n);
+    if (!Number.isFinite(n)) return '0';
+    if (abs >= 1000000000) return (n / 1000000000).toFixed(2) + 'B';
+    if (abs >= 1000000) return (n / 1000000).toFixed(2) + 'M';
+    if (abs >= 1000) return (n / 1000).toFixed(2) + 'K';
+    return Math.round(n).toLocaleString();
+  }
+
+  function formatPlainCount(value) {
+    const n = Number(value || 0);
+    return Number.isFinite(n) ? Math.round(n).toLocaleString() : '0';
+  }
+
+  function formatRate(value) {
+    return typeof value === 'number' && Number.isFinite(value)
+      ? (value * 100).toFixed(1) + '%'
+      : '—';
+  }
+
+  function formatDurationSeconds(value) {
+    if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) return '—';
+    const rounded = Math.round(value);
+    if (rounded >= 60) {
+      const minutes = Math.floor(rounded / 60);
+      const seconds = rounded % 60;
+      return `${minutes}m ${String(seconds).padStart(2, '0')}s`;
+    }
+    if (value < 10 && Math.abs(value - rounded) >= 0.05) return value.toFixed(1) + 's';
+    return rounded + 's';
+  }
+
+  function percent(value, total) {
+    const n = Number(value || 0);
+    const d = Number(total || 0);
+    if (!Number.isFinite(n) || !Number.isFinite(d) || d <= 0) return '0%';
+    return Math.max(0, Math.min(100, (n / d) * 100)).toFixed(1) + '%';
+  }
+
+  function usageMetric(label, value, detail) {
+    return `
+      <div class="usage-metric">
+        <span>${escapeHtml(label)}</span>
+        <strong title="${escapeHtml(value)}">${escapeHtml(value)}</strong>
+        ${detail ? `<em>${escapeHtml(detail)}</em>` : ''}
+      </div>
+    `;
+  }
+
+  function renderUsageTopList(label, note, rows, emptyText) {
+    const content = rows.length
+      ? `<div class="usage-top-scroll">${rows.map(row => `
+        <div class="usage-top-row">
+          <div class="usage-top-row-main">
+            <span title="${escapeHtml(row.name)}">${escapeHtml(row.name)}</span>
+            <strong>${escapeHtml(row.value)}</strong>
+          </div>
+          <div class="usage-top-track"><i style="--w:${escapeHtml(row.width)}"></i></div>
+          <em>${escapeHtml(row.meta)}</em>
+        </div>
+      `).join('')}</div>`
+      : `<div class="usage-top-empty">${escapeHtml(emptyText)}</div>`;
+
+    return `
+      <div class="usage-top-list">
+        <div class="usage-top-head">
+          <span>${escapeHtml(label)}</span>
+          <span>${rows.length ? escapeHtml(note) : '—'}</span>
+        </div>
+        ${content}
+      </div>
+    `;
+  }
+
+  function modelRows(stats) {
+    const grouped = (stats && stats.by_provider_model)
+      ? stats.by_provider_model
+      : ((stats && stats.by_model) || {});
+    const entries = Object.entries(grouped)
+      .sort((a, b) => Number(b[1]?.total_tokens || 0) - Number(a[1]?.total_tokens || 0));
+    const maxTokens = Math.max(1, ...entries.map(i => Number(i[1]?.total_tokens || 0)));
+    return entries.map(([name, item]) => ({
+      name: item?.provider && item?.model ? `${item.provider}/${item.model}` : name,
+      value: formatSmartNumber(item.total_tokens),
+      width: percent(item.total_tokens, maxTokens),
+      meta: `${formatPlainCount(item.llm_calls)} 次调用 · 缓存 ${formatRate(item.cache_rate)}`,
+    }));
+  }
+
+  function toolRows(stats) {
+    const entries = Object.entries((stats && stats.tools) || {})
+      .sort((a, b) => Number(b[1] || 0) - Number(a[1] || 0));
+    const maxCalls = Math.max(1, ...entries.map(i => Number(i[1] || 0)));
+    return entries.map(([name, count]) => ({
+      name,
+      value: formatPlainCount(count),
+      width: percent(count, maxCalls),
+      meta: `${formatPlainCount(count)} 次工具调用`,
+    }));
+  }
+
+  function scopeRows(stats) {
+    const labels = {
+      main: '主线',
+      summary: '摘要',
+      vision: '视觉',
+      bubble: 'Bubble',
+      subconscious: '潜意识',
+      mem0: 'mem0',
+      unknown: '未分类',
+    };
+    const scopes = (stats && stats.by_scope) || {};
+    const ordered = ['main', 'summary', 'vision', 'bubble', 'subconscious', 'mem0'];
+    if (scopes.unknown) ordered.push('unknown');
+    return ordered
+      .filter(key => scopes[key] || key !== 'unknown')
+      .map(key => {
+        const item = scopes[key] || {};
+        return {
+          name: labels[key] || key,
+          total: formatSmartNumber(item.total_tokens),
+          llm: formatPlainCount(item.llm_calls),
+          tools: formatPlainCount(item.tool_calls),
+          cache: formatRate(item.cache_rate),
+        };
+      });
+  }
+
+  function renderUsageScopeBreakdown(stats) {
+    const rows = scopeRows(stats);
+    if (!rows.length) return '';
+    return `
+      <div class="usage-scope">
+        <div class="usage-scope-title">
+          <span>来源拆分</span>
+          <span>Token / LLM / 工具 / 缓存</span>
+        </div>
+        ${rows.map(row => `
+          <div class="usage-scope-row">
+            <strong>${escapeHtml(row.name)}</strong>
+            <span title="${escapeHtml(row.total)} Token">${escapeHtml(row.total)}</span>
+            <span title="${escapeHtml(row.llm)} LLM">${escapeHtml(row.llm)} LLM</span>
+            <span title="${escapeHtml(row.tools)} 工具">${escapeHtml(row.tools)} 工具</span>
+            <span title="缓存 ${escapeHtml(row.cache)}">${escapeHtml(row.cache)}</span>
+          </div>
+        `).join('')}
+      </div>
+    `;
+  }
+
+  function renderUsageWindow(label, stats) {
+    stats = stats || {};
+    const input = Number(stats.input_tokens || 0);
+    const output = Number(stats.output_tokens || 0);
+    const cached = Number(stats.cached_tokens || 0);
+    const total = input + output;
+    return `
+      <section class="usage-window">
+        <div class="usage-window-title">
+          <h3>${escapeHtml(label)}</h3>
+          <span>${escapeHtml(formatSmartNumber(stats.total_tokens))}</span>
+        </div>
+        <div class="usage-metrics">
+          ${usageMetric('总 Token', formatSmartNumber(stats.total_tokens), `输入 ${formatSmartNumber(stats.input_tokens)} / 输出 ${formatSmartNumber(stats.output_tokens)}`)}
+          ${usageMetric('缓存命中', formatRate(stats.cache_rate), `已缓存 ${formatSmartNumber(stats.cached_tokens)}`)}
+          ${usageMetric('LLM 请求', formatPlainCount(stats.llm_calls), '模型响应次数')}
+          ${usageMetric('工具调用', formatPlainCount(stats.tool_calls), '工具执行次数')}
+          ${usageMetric('平均思考', formatDurationSeconds(stats.avg_thinking_seconds), `${formatPlainCount(stats.thinking_calls)} 轮推理`)}
+        </div>
+        <div class="usage-breakdown">
+          <div class="usage-line-head">
+            <span>输入 / 输出</span>
+            <span>${escapeHtml(formatSmartNumber(total))}</span>
+          </div>
+          <div class="usage-stack">
+            <i class="in" style="--w:${escapeHtml(percent(input, total))}"></i>
+            <i class="out" style="--w:${escapeHtml(percent(output, total))}"></i>
+          </div>
+          <div class="usage-cache-line">
+            <span>缓存命中</span>
+            <div class="usage-cache-track"><i style="--w:${escapeHtml(percent(cached, input))}"></i></div>
+            <strong>${escapeHtml(formatRate(stats.cache_rate))}</strong>
+          </div>
+        </div>
+        ${renderUsageScopeBreakdown(stats)}
+        <div class="usage-top-grid">
+          ${renderUsageTopList('模型分布', '按 Token', modelRows(stats), '暂无模型调用')}
+          ${renderUsageTopList('工具排行', '按次数', toolRows(stats), '暂无工具调用')}
+        </div>
+      </section>
+    `;
+  }
+
+  function renderUsageStats(stats) {
+    const panel = document.getElementById('usagePanel');
+    latestUsageStats = stats;
+    if (!stats) {
+      panel.style.display = 'none';
+      return;
+    }
+    const today = stats.today || {};
+    panel.innerHTML = `
+      <div class="usage-head">
+        <div class="usage-compact">
+          <span><b>${escapeHtml(formatSmartNumber(today.total_tokens))}</b> Token</span>
+          <span><b>${escapeHtml(formatRate(today.cache_rate))}</b> 缓存</span>
+          <span><b>${escapeHtml(formatPlainCount(today.llm_calls))}</b> LLM</span>
+          <span><b>${escapeHtml(formatPlainCount(today.tool_calls))}</b> 工具</span>
+          <span><b>${escapeHtml(formatDurationSeconds(today.avg_thinking_seconds))}</b> 思考</span>
+        </div>
+        <button type="button" onclick="toggleUsageStats()" aria-expanded="${usageExpanded ? 'true' : 'false'}">
+          ${usageExpanded ? '收起' : '展开'}
+        </button>
+      </div>
+      ${usageExpanded ? `
+        <div class="usage-window-grid">
+          ${renderUsageWindow('今日', stats.today)}
+          ${renderUsageWindow('近 7 日', stats.last_7_days)}
+          ${renderUsageWindow('累计', stats.lifetime)}
+        </div>
+      ` : ''}
+    `;
+    panel.style.display = 'block';
+  }
+
+  async function fetchTasks() {
+    const btn = document.getElementById('tasksBtn');
+    btn.disabled = true;
+    setLoading('tasksResp', '请求中…');
+    document.getElementById('tasksList').style.display = 'none';
+    try {
+      const res = await fetch(base() + '/api/debug/tasks');
+      const data = await res.json();
+      renderTasks(data);
+      setResp('tasksResp', data, res.ok);
+    } catch (e) {
+      setResp('tasksResp', { error: e.message }, false);
+    } finally {
+      btn.disabled = false;
+    }
+  }
+
+  function escapeHtml(s) {
+    return String(s ?? '').replace(/[&<>"']/g, c => (
+      { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]
+    ));
+  }
+
+  function renderTasks(data) {
+    const box = document.getElementById('tasksList');
+    const tasks = (data && data.tasks) || [];
+    if (!tasks.length) {
+      box.style.display = 'none';
+      return;
+    }
+    const summary = `<div class="tasks-summary">共 <b>${data.total}</b> 个 task，其中 `
+      + `<span class="badge badge-amber">${data.pending} pending</span> · `
+      + `<span class="badge badge-gray">${data.total - data.pending} done</span></div>`;
+    const rows = tasks.map(t => {
+      const stateBadge = t.done
+        ? `<span class="badge badge-gray">done</span>`
+        : `<span class="badge badge-amber">pending</span>`;
+      const curBadge = t.current ? ` <span class="badge badge-blue">current</span>` : '';
+      return `
+        <div class="task-row ${t.done ? '' : 'pending'}">
+          <div class="task-head">${stateBadge}${curBadge} ${escapeHtml(t.name)}</div>
+          <div class="task-coro">${escapeHtml(t.coro)}</div>
+          ${t.waiting_at ? `<div class="task-where">⏸ ${escapeHtml(t.waiting_at)}</div>` : ''}
+        </div>`;
+    }).join('');
+    box.innerHTML = summary + rows;
+    box.style.display = 'block';
+  }
+
+  function boolBadge(val, invertColor) {
+    if (val === undefined || val === null) return '<span class="badge badge-gray">—</span>';
+    const positive = invertColor ? !val : val;
+    const cls = positive ? 'badge-green' : 'badge-red';
+    return `<span class="badge ${cls}">${val ? 'true' : 'false'}</span>`;
+  }
+
+  async function switchModel() {
+    const provider = document.getElementById('switchProvider').value.trim();
+    const model_id = document.getElementById('switchModelId').value.trim();
+    if (!provider) {
+      alert('请填写 Provider');
+      return;
+    }
+    setLoading('switchResp', '请求中…');
+    try {
+      const payload = model_id ? { provider, model_id } : { provider };
+      const res = await fetch(base() + '/switch_model', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      const data = await res.json();
+      setResp('switchResp', data, res.ok);
+      if (res.ok) fetchStatus();
+    } catch (e) {
+      setResp('switchResp', { error: e.message }, false);
+    }
+  }
+
+  function renderModelConfig(data) {
+    if (!data || typeof data !== 'object') return;
+    const summary = data.summary || {};
+    const vision = data.vision || {};
+    document.getElementById('summaryProvider').value = summary.provider || '';
+    document.getElementById('summaryModel').value = summary.model || '';
+    document.getElementById('summaryThinking').value = summary.thinking ? 'true' : 'false';
+    document.getElementById('modelFallbacks').value = Array.isArray(data.fallbacks)
+      ? data.fallbacks.join('\n')
+      : '';
+    document.getElementById('visionProvider').value = vision.provider || '';
+    document.getElementById('visionModel').value = vision.model || '';
+  }
+
+  async function fetchModelConfig() {
+    const btn = document.getElementById('modelConfigRefreshBtn');
+    btn.disabled = true;
+    setLoading('modelConfigResp', '请求中…');
+    try {
+      const res = await fetch(base() + '/model_config');
+      const data = await res.json();
+      if (res.ok) renderModelConfig(data);
+      setResp('modelConfigResp', data, res.ok);
+    } catch (e) {
+      setResp('modelConfigResp', { error: e.message }, false);
+    } finally {
+      btn.disabled = false;
+    }
+  }
+
+  function modelFallbackLines() {
+    return document.getElementById('modelFallbacks').value
+      .split(/\r?\n/)
+      .map(s => s.trim())
+      .filter(Boolean);
+  }
+
+  async function saveModelConfig() {
+    const payload = {
+      summary: {
+        provider: document.getElementById('summaryProvider').value.trim(),
+        model: document.getElementById('summaryModel').value.trim(),
+        thinking: document.getElementById('summaryThinking').value === 'true',
+      },
+      fallbacks: modelFallbackLines(),
+      vision: {
+        provider: document.getElementById('visionProvider').value.trim(),
+        model: document.getElementById('visionModel').value.trim(),
+      },
+    };
+    setLoading('modelConfigResp', '请求中…');
+    try {
+      const res = await fetch(base() + '/model_config', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        renderModelConfig(data);
+        fetchStatus();
+      }
+      setResp('modelConfigResp', data, res.ok);
+    } catch (e) {
+      setResp('modelConfigResp', { error: e.message }, false);
+    }
+  }
+
+  async function postMessage() {
+    const sender_id = document.getElementById('msgSenderId').value.trim();
+    const conversation_id = document.getElementById('msgConversationId').value.trim();
+    const content   = document.getElementById('msgContent').value.trim();
+    if (!content) {
+      alert('请填写消息内容');
+      return;
+    }
+    setLoading('msgResp', '请求中…');
+    try {
+      const res = await fetch(base() + '/messages', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          sender_id,
+          content,
+          ...(conversation_id ? { conversation_id } : {}),
+        }),
+      });
+      const data = await res.json();
+      setResp('msgResp', data, res.ok);
+    } catch (e) {
+      setResp('msgResp', { error: e.message }, false);
+    }
+  }
+
+  async function registerCommunicate() {
+    const kind = document.getElementById('commKind').value.trim();
+    const client_id = document.getElementById('commClientId').value.trim();
+    const display_name = document.getElementById('commDisplayName').value.trim();
+    setLoading('commResp', '请求中…');
+    try {
+      const res = await fetch(base() + '/api/communicate/register', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ kind, client_id, display_name, metadata: { source: 'api_test' } }),
+      });
+      const data = await res.json();
+      if (res.ok && data.registration_id) {
+        document.getElementById('commDeleteId').value = data.registration_id;
+      }
+      setResp('commResp', data, res.ok);
+    } catch (e) {
+      setResp('commResp', { error: e.message }, false);
+    }
+  }
+
+  async function listCommunicateRegistrations() {
+    const btn = document.getElementById('commListBtn');
+    btn.disabled = true;
+    setLoading('commResp', '请求中…');
+    try {
+      const res = await fetch(base() + '/api/communicate/register');
+      const data = await res.json();
+      const firstInactive = (data.registrations || []).find(r => !r.active);
+      if (firstInactive) {
+        document.getElementById('commDeleteId').value = firstInactive.registration_id;
+      }
+      setResp('commResp', data, res.ok);
+    } catch (e) {
+      setResp('commResp', { error: e.message }, false);
+    } finally {
+      btn.disabled = false;
+    }
+  }
+
+  async function deleteCommunicateRegistration() {
+    const registrationId = document.getElementById('commDeleteId').value.trim();
+    if (!registrationId) {
+      alert('请填写 registration_id');
+      return;
+    }
+    setLoading('commResp', '请求中…');
+    try {
+      const res = await fetch(base() + '/api/communicate/register/' + encodeURIComponent(registrationId), {
+        method: 'DELETE',
+      });
+      const data = await res.json();
+      setResp('commResp', data, res.ok);
+    } catch (e) {
+      setResp('commResp', { error: e.message }, false);
+    }
+  }
+
+  let _backfillPoll = null;
+  function setBackfillBar(done, total, running) {
+    const wrap  = document.getElementById('backfillProgress');
+    const fill  = document.getElementById('backfillProgressFill');
+    const label = document.getElementById('backfillProgressLabel');
+    wrap.style.display = 'block';
+    const pct = total ? Math.round((done / total) * 100) : (running ? 0 : 100);
+    fill.style.width = pct + '%';
+    fill.style.background = running ? '#40a02b' : '#1e66f5';  // 进行中绿色，完成蓝色
+    label.textContent = running ? `回溯中… ${done}/${total} 块 (${pct}%)`
+                                : `✓ 回溯完成：共处理 ${total} 块`;
+  }
+
+  async function backfillTree() {
+    const max_leaves = parseInt(document.getElementById('backfillMaxLeaves').value, 10) || 64;
+    setLoading('backfillResp', '请求中…');
+    document.getElementById('backfillProgress').style.display = 'none';  // 重置进度条
+    try {
+      const res = await fetch(base() + '/backfill_tree', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ max_leaves }),
+      });
+      const data = await res.json();
+      setResp('backfillResp', data, res.ok);
+      if (res.ok && data.status === 'started') { setBackfillBar(0, 0, true); pollBackfill(); }
+    } catch (e) {
+      setResp('backfillResp', { error: e.message }, false);
+    }
+  }
+
+  function pollBackfill() {
+    if (_backfillPoll) clearInterval(_backfillPoll);
+    _backfillPoll = setInterval(async () => {
+      try {
+        const res = await fetch(base() + '/backfill_tree');
+        const p = await res.json();
+        setBackfillBar(p.done || 0, p.total || 0, !!p.running);
+        if (!p.running) {
+          clearInterval(_backfillPoll); _backfillPoll = null;
+          setResp('backfillResp', p, true);  // 最终状态写回响应框
+        }
+      } catch (e) {
+        clearInterval(_backfillPoll); _backfillPoll = null;
+      }
+    }, 1500);
+  }
+
+  async function listBackups() {
+    const btn = document.getElementById('backupsBtn');
+    btn.disabled = true;
+    setLoading('backupsResp', '请求中…');
+    try {
+      const res = await fetch(base() + '/backups');
+      const data = await res.json();
+      const sel = document.getElementById('restoreFilename');
+      const backups = (data && data.backups) || [];
+      if (backups.length) {
+        sel.innerHTML = backups.map(b =>
+          `<option value="${b.filename}">${b.filename} · ${b.message_count ?? '?'} 条 · ${b.timestamp ?? '?'}</option>`
+        ).join('');
+      } else {
+        sel.innerHTML = '<option value="">（无备份）</option>';
+      }
+      setResp('backupsResp', data, res.ok);
+    } catch (e) {
+      setResp('backupsResp', { error: e.message }, false);
+    } finally {
+      btn.disabled = false;
+    }
+  }
+
+  async function restoreBackup() {
+    const filename = document.getElementById('restoreFilename').value;
+    const mode = document.getElementById('restoreMode').value;
+    if (!filename) {
+      alert('请先刷新并选择一个备份文件');
+      return;
+    }
+    if (!confirm(`确定以 ${mode} 模式从 ${filename} 恢复？`)) return;
+    setLoading('backupsResp', '请求中…');
+    try {
+      const res = await fetch(base() + '/backups/restore', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ filename, mode }),
+      });
+      const data = await res.json();
+      setResp('backupsResp', data, res.ok);
+    } catch (e) {
+      setResp('backupsResp', { error: e.message }, false);
+    }
+  }
+
+  setupDesktopReleaseDropzone();
+  renderProviderOptions();
+  updateModelPlaceholder();
+
+  // Auto-fetch status on load
+  fetchStatus();
+</script>
+</body>
+</html>

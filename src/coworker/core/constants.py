@@ -1,0 +1,2 @@
+TICK_TAG = "heartbeat"
+DEFAULT_LLM_MAX_TOKENS = 8_192

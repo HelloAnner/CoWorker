@@ -1,0 +1,11 @@
+[workspace]
+members = [
+    "apps/coworker-desktop/bridge",
+    "apps/coworker-desktop/desktop/src-tauri",
+]
+resolver = "2"
+
+[workspace.package]
+edition = "2024"
+version = "0.2.4"
+license = "MIT"

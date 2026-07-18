@@ -1,0 +1,56 @@
+.env
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+dist/
+build/
+target/
+.cache/
+.cargo/
+.playwright-cli/
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+.pytest-tmp/
+node_modules/
+status-app/node_modules/
+status-app/.vite/
+.claude/settings.local.json
+# 命名 provider 配置（含真实 API key），单复数都忽略，避免照 example 创建后误提交
+provider.json
+providers.json
+
+# 本地实验脚本，不纳入版本控制
+scratch/
+
+# Runtime data (keep dirs, ignore contents)
+data/*
+.coworker/*
+!.coworker/subconscious
+
+# OS / 编辑器噪声
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+
+# Claude Code 运行时产物（保留可共享的 settings.json / 项目级 skills）
+.claude/plans/
+.claude/todos/
+.claude/worktrees/
+.claude/shell-snapshots/
+.claude/scheduled_tasks.json
+
+# 备份文件防误推
+*.bak
+
+# Encrypted SA password storage
+credentials/
+
+# 探索平台：experiments 元数据 + 各分支 workdir（含导入的密钥/运行时状态）
+apps/explore-lab/backend/data/
+apps/explore-lab/frontend/node_modules/
+apps/explore-lab/frontend/dist/
+*.remote

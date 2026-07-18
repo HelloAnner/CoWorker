@@ -1,0 +1,252 @@
+name: CoWorker Desktop Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      notarize_macos:
+        description: "Attempt macOS notarization when Apple credentials are configured"
+        required: false
+        default: true
+        type: boolean
+  push:
+    tags:
+      - "coworker-desktop-v*"
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Windows NSIS
+            os: windows-latest
+            bundles: nsis
+            artifact_name: coworker-desktop-windows
+            target: ""
+            target_args: ""
+            artifact_glob: |
+              target/release/bundle/nsis/*.exe
+              target/release/bundle/nsis/*.exe.sig
+              apps/coworker-desktop/desktop/src-tauri/target/release/bundle/nsis/*.exe
+              apps/coworker-desktop/desktop/src-tauri/target/release/bundle/nsis/*.exe.sig
+          - name: macOS DMG arm64
+            os: macos-latest
+            bundles: app,dmg
+            artifact_name: coworker-desktop-macos-arm64
+            target: aarch64-apple-darwin
+            target_args: --target aarch64-apple-darwin
+            artifact_glob: |
+              target/aarch64-apple-darwin/release/bundle/dmg/*.dmg
+              target/aarch64-apple-darwin/release/bundle/macos/*.tar.gz
+              target/aarch64-apple-darwin/release/bundle/macos/*.tar.gz.sig
+              apps/coworker-desktop/desktop/src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/*.dmg
+              apps/coworker-desktop/desktop/src-tauri/target/aarch64-apple-darwin/release/bundle/macos/*.tar.gz
+              apps/coworker-desktop/desktop/src-tauri/target/aarch64-apple-darwin/release/bundle/macos/*.tar.gz.sig
+          - name: macOS DMG x86_64
+            os: macos-latest
+            bundles: app,dmg
+            artifact_name: coworker-desktop-macos-x86_64
+            target: x86_64-apple-darwin
+            target_args: --target x86_64-apple-darwin
+            artifact_glob: |
+              target/x86_64-apple-darwin/release/bundle/dmg/*.dmg
+              target/x86_64-apple-darwin/release/bundle/macos/*.tar.gz
+              target/x86_64-apple-darwin/release/bundle/macos/*.tar.gz.sig
+              apps/coworker-desktop/desktop/src-tauri/target/x86_64-apple-darwin/release/bundle/dmg/*.dmg
+              apps/coworker-desktop/desktop/src-tauri/target/x86_64-apple-darwin/release/bundle/macos/*.tar.gz
+              apps/coworker-desktop/desktop/src-tauri/target/x86_64-apple-darwin/release/bundle/macos/*.tar.gz.sig
+          - name: Linux AppImage deb
+            os: ubuntu-22.04
+            bundles: appimage,deb
+            artifact_name: coworker-desktop-linux
+            target: ""
+            target_args: ""
+            artifact_glob: |
+              target/release/bundle/appimage/*.AppImage
+              target/release/bundle/appimage/*.AppImage.sig
+              target/release/bundle/deb/*.deb
+              apps/coworker-desktop/desktop/src-tauri/target/release/bundle/appimage/*.AppImage
+              apps/coworker-desktop/desktop/src-tauri/target/release/bundle/appimage/*.AppImage.sig
+              apps/coworker-desktop/desktop/src-tauri/target/release/bundle/deb/*.deb
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: apps/coworker-desktop/desktop/package-lock.json
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install Rust target
+        if: matrix.target != ''
+        run: rustup target add ${{ matrix.target }}
+
+      - name: Check product version
+        run: python scripts/check_version.py
+
+      - name: Cache Rust build
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            . -> target
+
+      - name: Install Linux dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            patchelf \
+            pkg-config
+
+      - name: Install frontend dependencies
+        working-directory: apps/coworker-desktop/desktop
+        run: npm ci
+
+      - name: Import macOS signing certificate
+        if: runner.os == 'macOS'
+        shell: bash
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+        run: |
+          if [[ -z "$APPLE_CERTIFICATE" || -z "$APPLE_CERTIFICATE_PASSWORD" ]]; then
+            echo "APPLE_CERTIFICATE or APPLE_CERTIFICATE_PASSWORD is not set; building unsigned macOS artifact."
+            exit 0
+          fi
+
+          KEYCHAIN_PASSWORD="${KEYCHAIN_PASSWORD:-$(uuidgen)}"
+          CERTIFICATE_PATH="$RUNNER_TEMP/coworker-desktop-signing.p12"
+          KEYCHAIN_PATH="$RUNNER_TEMP/coworker-desktop-signing.keychain-db"
+
+          echo -n "$APPLE_CERTIFICATE" | base64 -D > "$CERTIFICATE_PATH"
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security import "$CERTIFICATE_PATH" -P "$APPLE_CERTIFICATE_PASSWORD" -A -t cert -f pkcs12 -k "$KEYCHAIN_PATH"
+          security list-keychains -d user -s "$KEYCHAIN_PATH" $(security list-keychains -d user | tr -d '"')
+          security default-keychain -s "$KEYCHAIN_PATH"
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+
+          if [[ -z "$APPLE_SIGNING_IDENTITY" ]]; then
+            APPLE_SIGNING_IDENTITY="$(security find-identity -v -p codesigning "$KEYCHAIN_PATH" | sed -n 's/.*"\(Developer ID Application:.*\)".*/\1/p' | head -n 1)"
+          fi
+
+          if [[ -z "$APPLE_SIGNING_IDENTITY" ]]; then
+            APPLE_SIGNING_IDENTITY="$(security find-identity -v -p codesigning "$KEYCHAIN_PATH" | sed -n 's/.*"\(.*\)".*/\1/p' | head -n 1)"
+          fi
+
+          if [[ -z "$APPLE_SIGNING_IDENTITY" ]]; then
+            echo "No valid macOS code signing identity found in imported certificate."
+            exit 1
+          fi
+
+          echo "APPLE_SIGNING_IDENTITY=$APPLE_SIGNING_IDENTITY" >> "$GITHUB_ENV"
+          if [[ "$APPLE_SIGNING_IDENTITY" =~ \(([A-Z0-9]{3,})\)$ ]]; then
+            echo "APPLE_SIGNING_TEAM_ID=${BASH_REMATCH[1]}" >> "$GITHUB_ENV"
+          fi
+          security find-identity -v -p codesigning "$KEYCHAIN_PATH"
+
+      - name: Configure macOS notarization
+        if: runner.os == 'macOS'
+        shell: bash
+        env:
+          NOTARIZE_MACOS: ${{ (github.event_name != 'workflow_dispatch' || inputs.notarize_macos) && 'true' || 'false' }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          APPLE_API_KEY_P8_BASE64: ${{ secrets.APPLE_API_KEY_P8_BASE64 }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          if [[ "$NOTARIZE_MACOS" != "true" ]]; then
+            echo "macOS notarization disabled for this workflow run."
+            exit 0
+          fi
+
+          require_developer_id_identity() {
+            if [[ -z "${APPLE_SIGNING_IDENTITY:-}" ]]; then
+              echo "::error::macOS notarization requires APPLE_CERTIFICATE and APPLE_CERTIFICATE_PASSWORD so the app can be signed before submission."
+              exit 1
+            fi
+
+            if [[ "$APPLE_SIGNING_IDENTITY" != Developer\ ID\ Application:* ]]; then
+              echo "::error::macOS notarization requires a Developer ID Application certificate. Imported identity was '$APPLE_SIGNING_IDENTITY'."
+              exit 1
+            fi
+          }
+
+          if [[ -n "$APPLE_API_ISSUER" || -n "$APPLE_API_KEY" || -n "$APPLE_API_KEY_P8_BASE64" ]]; then
+            if [[ -z "$APPLE_API_ISSUER" || -z "$APPLE_API_KEY" || -z "$APPLE_API_KEY_P8_BASE64" ]]; then
+              echo "::error::Incomplete App Store Connect API key credentials. Set APPLE_API_ISSUER, APPLE_API_KEY, and APPLE_API_KEY_P8_BASE64, or remove them and use APPLE_ID, APPLE_PASSWORD, and APPLE_TEAM_ID."
+              exit 1
+            fi
+
+            require_developer_id_identity
+
+            API_KEY_PATH="$RUNNER_TEMP/AuthKey_${APPLE_API_KEY}.p8"
+            echo -n "$APPLE_API_KEY_P8_BASE64" | base64 -D > "$API_KEY_PATH"
+            chmod 600 "$API_KEY_PATH"
+            {
+              echo "APPLE_API_ISSUER=$APPLE_API_ISSUER"
+              echo "APPLE_API_KEY=$APPLE_API_KEY"
+              echo "APPLE_API_KEY_PATH=$API_KEY_PATH"
+            } >> "$GITHUB_ENV"
+            echo "macOS notarization configured with App Store Connect API key."
+            exit 0
+          fi
+
+          APPLE_TEAM_ID="${APPLE_TEAM_ID:-${APPLE_SIGNING_TEAM_ID:-}}"
+          if [[ -n "$APPLE_ID" || -n "$APPLE_PASSWORD" || -n "$APPLE_TEAM_ID" ]]; then
+            if [[ -z "$APPLE_ID" || -z "$APPLE_PASSWORD" || ${#APPLE_TEAM_ID} -lt 3 ]]; then
+              echo "::error::Incomplete Apple ID notarization credentials. Set APPLE_ID, APPLE_PASSWORD, and APPLE_TEAM_ID. APPLE_TEAM_ID should be your Apple Developer team ID, for example the value in parentheses in a signing identity."
+              exit 1
+            fi
+
+            require_developer_id_identity
+
+            {
+              echo "APPLE_ID=$APPLE_ID"
+              echo "APPLE_PASSWORD=$APPLE_PASSWORD"
+              echo "APPLE_TEAM_ID=$APPLE_TEAM_ID"
+            } >> "$GITHUB_ENV"
+            echo "macOS notarization configured with Apple ID credentials."
+            exit 0
+          fi
+
+          echo "No complete macOS notarization credentials are configured; building without notarization."
+
+      - name: Configure Tauri updater
+        env:
+          TAURI_UPDATER_PUBLIC_KEY: ${{ secrets.TAURI_UPDATER_PUBLIC_KEY }}
+          TAURI_UPDATER_ENDPOINT: ${{ secrets.TAURI_UPDATER_ENDPOINT }}
+        run: python scripts/configure_tauri_updater.py
+
+      - name: Build Tauri bundle
+        working-directory: apps/coworker-desktop/desktop
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: npm run tauri -- build --bundles ${{ matrix.bundles }} ${{ matrix.target_args }}
+
+      - name: Upload bundle artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact_name }}
+          path: ${{ matrix.artifact_glob }}
+          if-no-files-found: error

@@ -1,0 +1,848 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Coworker Chat</title>
+  <script src="https://cdn.jsdelivr.net/npm/marked@13/marked.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/dompurify@3/dist/purify.min.js"></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: #f0f2f5;
+      height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .chat-container {
+      width: 720px;
+      height: 90vh;
+      background: #fff;
+      border-radius: 12px;
+      box-shadow: 0 4px 24px rgba(0,0,0,0.12);
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
+    /* Header */
+    .header {
+      padding: 16px 20px;
+      background: #1a1a2e;
+      color: #fff;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .avatar {
+      width: 36px;
+      height: 36px;
+      border-radius: 50%;
+      background: linear-gradient(135deg, #667eea, #764ba2);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 18px;
+    }
+
+    .header-info h2 { font-size: 15px; font-weight: 600; }
+
+    .status-badge {
+      font-size: 11px;
+      padding: 2px 8px;
+      border-radius: 10px;
+      background: #2a2a4a;
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+    }
+
+    .status-dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: #888;
+      transition: background 0.3s;
+    }
+    .status-dot.connected { background: #4caf50; }
+    .status-dot.connecting { background: #ff9800; animation: blink 1s infinite; }
+
+    @keyframes blink { 0%,100% { opacity: 1; } 50% { opacity: 0.3; } }
+
+    .header-right { margin-left: auto; display: flex; align-items: center; gap: 10px; }
+
+    .header-input {
+      background: #2a2a4a;
+      border: 1px solid #3a3a5a;
+      color: #ccc;
+      border-radius: 6px;
+      padding: 4px 8px;
+      font-size: 12px;
+      outline: none;
+    }
+    .header-input:focus { border-color: #667eea; }
+    #userIdInput { width: 100px; }
+    #serverInput { width: 160px; }
+
+    .header-label {
+      font-size: 11px;
+      color: #666;
+    }
+
+    /* Messages */
+    .messages {
+      flex: 1;
+      overflow-y: auto;
+      padding: 20px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    .messages::-webkit-scrollbar { width: 4px; }
+    .messages::-webkit-scrollbar-thumb { background: #ddd; border-radius: 2px; }
+
+    .message-row {
+      display: flex;
+      gap: 10px;
+      max-width: 85%;
+    }
+
+    .message-row.user { align-self: flex-end; flex-direction: row-reverse; }
+    .message-row.assistant { align-self: flex-start; }
+    .message-row.system { align-self: center; max-width: 100%; }
+
+    .msg-avatar {
+      width: 30px;
+      height: 30px;
+      border-radius: 50%;
+      flex-shrink: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 14px;
+    }
+
+    .message-row.user .msg-avatar { background: #e8eaf6; }
+    .message-row.assistant .msg-avatar {
+      background: linear-gradient(135deg, #667eea, #764ba2);
+      color: #fff;
+    }
+
+    .bubble {
+      padding: 10px 14px;
+      border-radius: 16px;
+      font-size: 14px;
+      line-height: 1.6;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+
+    /* Markdown rendered content */
+    .bubble.markdown {
+      white-space: normal;
+    }
+    .bubble.markdown p { margin: 0 0 8px; }
+    .bubble.markdown p:last-child { margin-bottom: 0; }
+    .bubble.markdown h1,.bubble.markdown h2,.bubble.markdown h3,
+    .bubble.markdown h4,.bubble.markdown h5,.bubble.markdown h6 {
+      margin: 12px 0 6px;
+      font-weight: 600;
+      line-height: 1.3;
+    }
+    .bubble.markdown h1 { font-size: 1.3em; }
+    .bubble.markdown h2 { font-size: 1.15em; }
+    .bubble.markdown h3 { font-size: 1.05em; }
+    .bubble.markdown ul,.bubble.markdown ol {
+      margin: 4px 0 8px 20px;
+      padding: 0;
+    }
+    .bubble.markdown li { margin: 2px 0; }
+    .bubble.markdown code {
+      background: rgba(0,0,0,0.07);
+      border-radius: 4px;
+      padding: 1px 5px;
+      font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+      font-size: 0.88em;
+    }
+    .bubble.markdown pre {
+      background: #1e1e2e;
+      border-radius: 8px;
+      padding: 12px 14px;
+      overflow-x: auto;
+      margin: 8px 0;
+    }
+    .bubble.markdown pre code {
+      background: none;
+      padding: 0;
+      color: #cdd6f4;
+      font-size: 0.85em;
+    }
+    .bubble.markdown blockquote {
+      border-left: 3px solid #ccc;
+      margin: 8px 0;
+      padding: 4px 12px;
+      color: #666;
+    }
+    .bubble.markdown a { color: #667eea; text-decoration: underline; }
+    .bubble.markdown hr { border: none; border-top: 1px solid #ddd; margin: 10px 0; }
+    .bubble.markdown table { border-collapse: collapse; width: 100%; margin: 8px 0; font-size: 0.9em; }
+    .bubble.markdown th,.bubble.markdown td { border: 1px solid #ddd; padding: 6px 10px; }
+    .bubble.markdown th { background: #f0f0f0; font-weight: 600; }
+    .bubble.markdown strong { font-weight: 600; }
+    .bubble.markdown em { font-style: italic; }
+
+    .message-row.user .bubble {
+      background: #1a1a2e;
+      color: #fff;
+      border-bottom-right-radius: 4px;
+    }
+
+    .message-row.assistant .bubble {
+      background: #f5f5f5;
+      color: #222;
+      border-bottom-left-radius: 4px;
+    }
+
+    .message-row.system .bubble {
+      background: transparent;
+      color: #999;
+      font-size: 12px;
+      text-align: center;
+    }
+
+    /* Connection notice: single row that updates in place */
+    .message-row.conn-notice .bubble {
+      color: #b26a00;
+      background: #fff6e5;
+      border-radius: 10px;
+      padding: 5px 12px;
+    }
+
+    .msg-time {
+      font-size: 10px;
+      color: #bbb;
+      margin-top: 4px;
+      padding: 0 4px;
+    }
+    .message-row.user .msg-time { text-align: right; }
+
+    /* Attachment previews inside bubble */
+    .bubble img.att-preview {
+      max-width: 240px;
+      max-height: 180px;
+      border-radius: 8px;
+      display: block;
+      margin-top: 6px;
+    }
+    .att-chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      background: rgba(255,255,255,0.15);
+      border-radius: 6px;
+      padding: 3px 8px;
+      font-size: 12px;
+      margin-top: 6px;
+    }
+    .message-row.user .att-chip { background: rgba(255,255,255,0.15); color: #ddd; }
+    .message-row.assistant .att-chip { background: #e8eaf6; color: #444; }
+
+    /* Typing indicator */
+    .typing-indicator {
+      display: none;
+      align-self: flex-start;
+      padding: 8px 16px;
+      background: #f5f5f5;
+      border-radius: 16px;
+      border-bottom-left-radius: 4px;
+    }
+    .typing-indicator.show { display: flex; gap: 4px; align-items: center; }
+    .typing-indicator span {
+      width: 6px;
+      height: 6px;
+      background: #999;
+      border-radius: 50%;
+      animation: bounce 1.2s infinite;
+    }
+    .typing-indicator span:nth-child(2) { animation-delay: 0.2s; }
+    .typing-indicator span:nth-child(3) { animation-delay: 0.4s; }
+    @keyframes bounce { 0%,60%,100% { transform: translateY(0); } 30% { transform: translateY(-6px); } }
+
+    /* Input area */
+    .input-area {
+      padding: 16px 20px;
+      border-top: 1px solid #eee;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .input-row {
+      display: flex;
+      gap: 10px;
+      align-items: flex-end;
+    }
+
+    textarea {
+      flex: 1;
+      border: 1px solid #e0e0e0;
+      border-radius: 10px;
+      padding: 10px 14px;
+      font-size: 14px;
+      font-family: inherit;
+      resize: none;
+      outline: none;
+      max-height: 120px;
+      line-height: 1.5;
+      transition: border-color 0.2s;
+    }
+    textarea:focus { border-color: #667eea; }
+
+    .attach-btn {
+      width: 40px;
+      height: 40px;
+      border-radius: 50%;
+      border: 1px solid #e0e0e0;
+      background: #fff;
+      color: #666;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+      font-size: 18px;
+      transition: background 0.2s, border-color 0.2s;
+    }
+    .attach-btn:hover { background: #f5f5f5; border-color: #ccc; }
+    .attach-btn.has-files { border-color: #667eea; color: #667eea; }
+
+    .send-btn {
+      width: 40px;
+      height: 40px;
+      border-radius: 50%;
+      border: none;
+      background: #1a1a2e;
+      color: #fff;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+      transition: background 0.2s, transform 0.1s;
+    }
+    .send-btn:hover { background: #2a2a4e; }
+    .send-btn:active { transform: scale(0.92); }
+    .send-btn:disabled { background: #ccc; cursor: not-allowed; }
+
+    .send-icon {
+      width: 18px;
+      height: 18px;
+      fill: none;
+      stroke: #fff;
+      stroke-width: 2;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+    }
+
+    /* Pending attachments list */
+    .pending-attachments {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+    }
+    .pending-chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      background: #f0f2f5;
+      border-radius: 8px;
+      padding: 4px 8px;
+      font-size: 12px;
+      color: #555;
+    }
+    .pending-chip img {
+      width: 28px;
+      height: 28px;
+      object-fit: cover;
+      border-radius: 4px;
+    }
+    .pending-chip .remove-att {
+      cursor: pointer;
+      color: #999;
+      font-size: 14px;
+      line-height: 1;
+    }
+    .pending-chip .remove-att:hover { color: #e53935; }
+  </style>
+</head>
+<body>
+<div class="chat-container">
+  <div class="header">
+    <div class="avatar">🤖</div>
+    <div class="header-info">
+      <h2>AI Coworker</h2>
+      <span class="status-badge">
+        <span class="status-dot" id="statusDot"></span>
+        <span id="statusText">未连接</span>
+      </span>
+    </div>
+    <div class="header-right">
+      <span class="header-label">服务器</span>
+      <input class="header-input" id="serverInput" placeholder="localhost:8000" title="服务器地址" />
+      <span class="header-label">用户 ID</span>
+      <input class="header-input" id="userIdInput" placeholder="user" title="你的用户 ID" />
+      <span class="header-label">传输</span>
+      <select class="header-input" id="transportSelect" title="消息传输方式">
+        <option value="sse">SSE</option>
+        <option value="ws">WebSocket</option>
+      </select>
+    </div>
+  </div>
+
+  <div class="messages" id="messages">
+    <div class="message-row system">
+      <div class="bubble">修改右上角的用户 ID，然后开始聊天</div>
+    </div>
+  </div>
+
+  <div class="typing-indicator" id="typingIndicator">
+    <span></span><span></span><span></span>
+  </div>
+
+  <div class="input-area">
+    <div class="pending-attachments" id="pendingAttachments"></div>
+    <div class="input-row">
+      <button class="attach-btn" id="attachBtn" title="添加附件">📎</button>
+      <input type="file" id="fileInput" multiple style="display:none" />
+      <textarea
+        id="msgInput"
+        placeholder="输入消息，Enter 发送，Shift+Enter 换行"
+        rows="1"
+      ></textarea>
+      <button class="send-btn" id="sendBtn" disabled title="发送">
+        <svg class="send-icon" viewBox="0 0 24 24">
+          <line x1="22" y1="2" x2="11" y2="13"></line>
+          <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
+        </svg>
+      </button>
+    </div>
+  </div>
+</div>
+
+<script>
+  const STORAGE_KEY_SERVER = "coworker_server";
+  const STORAGE_KEY_USER = "coworker_user_id";
+  const STORAGE_KEY_TRANSPORT = "coworker_transport";
+
+  const messagesEl = document.getElementById("messages");
+  const msgInput = document.getElementById("msgInput");
+  const sendBtn = document.getElementById("sendBtn");
+  const attachBtn = document.getElementById("attachBtn");
+  const fileInput = document.getElementById("fileInput");
+  const pendingAttachmentsEl = document.getElementById("pendingAttachments");
+  const statusDot = document.getElementById("statusDot");
+  const statusText = document.getElementById("statusText");
+  const userIdInput = document.getElementById("userIdInput");
+  const serverInput = document.getElementById("serverInput");
+  const typingIndicator = document.getElementById("typingIndicator");
+  const transportSelect = document.getElementById("transportSelect");
+
+  serverInput.value = localStorage.getItem(STORAGE_KEY_SERVER) || "localhost:8000";
+  userIdInput.value = localStorage.getItem(STORAGE_KEY_USER) || "user";
+  transportSelect.value = localStorage.getItem(STORAGE_KEY_TRANSPORT) || "sse";  // 默认 SSE
+
+  let ws = null;
+  let es = null;            // SSE EventSource
+  let countdownTimer = null;
+  let hasConnected = false;
+  let rejectedByServer = false;
+
+  // Pending attachments: [{filename, media_type, data (base64 without prefix), dataUrl (for preview)}]
+  let pendingFiles = [];
+
+  function curServer() { return serverInput.value.trim() || "localhost:8000"; }
+  function curUserId() { return userIdInput.value.trim() || "user"; }
+  function curTransport() { return transportSelect.value || "sse"; }
+
+  function onConnected(server, userId) {
+    setStatus("connected");
+    sendBtn.disabled = false;
+    clearConnNotice();
+    if (!hasConnected) {
+      addSystemMsg(`已连接 ${server}（${curTransport().toUpperCase()}），身份：${userId}`);
+      hasConnected = true;
+    }
+  }
+
+  function parseIncoming(text) {
+    try {
+      const payload = JSON.parse(text);
+      if (
+        payload
+        && typeof payload === "object"
+        && ("message" in payload || "attachments" in payload)
+      ) {
+        return {
+          message: payload.message || "",
+          attachments: Array.isArray(payload.attachments) ? payload.attachments : [],
+        };
+      }
+    } catch (e) {
+      // Plain text messages are still valid for connection notices and older manual sends.
+    }
+    return { message: text, attachments: [] };
+  }
+
+  function onIncoming(text) {
+    if (text.startsWith("连接被拒绝：")) {
+      handleConnectionRejected(text);
+      return;
+    }
+    hideTyping();
+    const incoming = parseIncoming(text);
+    addMessage("assistant", incoming.message, incoming.attachments);
+  }
+
+  function handleConnectionRejected(text) {
+    rejectedByServer = true;
+    hideTyping();
+    clearCountdown();
+    setStatus("disconnected");
+    sendBtn.disabled = true;
+    setConnNotice(text);
+    if (ws) {
+      ws.onclose = null;
+      ws.close();
+      ws = null;
+    }
+    if (es) {
+      es.onerror = null;
+      es.close();
+      es = null;
+    }
+  }
+
+  function connect() {
+    const server = curServer();
+    const userId = curUserId();
+    localStorage.setItem(STORAGE_KEY_SERVER, server);
+    localStorage.setItem(STORAGE_KEY_USER, userId);
+    localStorage.setItem(STORAGE_KEY_TRANSPORT, curTransport());
+    rejectedByServer = false;
+    setStatus("connecting");
+    clearCountdown();
+    if (curTransport() === "sse") {
+      connectSSE(server, userId);
+    } else {
+      connectWS(server, userId);
+    }
+  }
+
+  function connectWS(server, userId) {
+    ws = new WebSocket(`ws://${server}/ws/${encodeURIComponent(userId)}`);
+    ws.onopen = () => onConnected(server, userId);
+    ws.onmessage = (e) => onIncoming(e.data);
+    ws.onclose = () => {
+      if (rejectedByServer) return;
+      setStatus("disconnected");
+      sendBtn.disabled = true;
+      scheduleReconnect();
+    };
+    // onerror is followed by onclose; the reconnect is handled there to
+    // avoid emitting a separate message on every failed attempt.
+    ws.onerror = () => {};
+  }
+
+  function connectSSE(server, userId) {
+    // EventSource 原生自带自动重连，无需自定义 scheduleReconnect。
+    es = new EventSource(`http://${server}/sse/${encodeURIComponent(userId)}`);
+    es.onopen = () => onConnected(server, userId);
+    es.onmessage = (e) => onIncoming(e.data);
+    es.onerror = () => {
+      // 浏览器会在后台自动重连；这里仅反映状态、禁用发送直到 onopen 再次触发。
+      setStatus("disconnected");
+      sendBtn.disabled = true;
+    };
+  }
+
+  // Single reconnect notice that updates in place (instead of stacking up).
+  function scheduleReconnect() {
+    let secs = 5;
+    const tick = () => setConnNotice(`连接已断开，${secs} 秒后重试…`);
+    tick();
+    clearCountdown();
+    countdownTimer = setInterval(() => {
+      secs -= 1;
+      if (secs <= 0) {
+        clearCountdown();
+        setConnNotice("正在重新连接…");
+        connect();
+      } else {
+        tick();
+      }
+    }, 1000);
+  }
+
+  function clearCountdown() {
+    if (countdownTimer) { clearInterval(countdownTimer); countdownTimer = null; }
+  }
+
+  let connNoticeEl = null;
+  function setConnNotice(text) {
+    if (!connNoticeEl) {
+      connNoticeEl = document.createElement("div");
+      connNoticeEl.className = "message-row system conn-notice";
+      const bubble = document.createElement("div");
+      bubble.className = "bubble";
+      connNoticeEl.appendChild(bubble);
+      messagesEl.appendChild(connNoticeEl);
+      scrollToBottom();
+    }
+    connNoticeEl.firstChild.textContent = text;
+  }
+
+  function clearConnNotice() {
+    if (connNoticeEl) { connNoticeEl.remove(); connNoticeEl = null; }
+  }
+
+  function setStatus(state) {
+    statusDot.className = "status-dot " + (state === "connected" ? "connected" : state === "connecting" ? "connecting" : "");
+    statusText.textContent = { connected: "已连接", connecting: "连接中…", disconnected: "已断开" }[state] || state;
+  }
+
+  function addMessage(role, text, attachments) {
+    const row = document.createElement("div");
+    row.className = `message-row ${role}`;
+
+    const avatar = document.createElement("div");
+    avatar.className = "msg-avatar";
+    avatar.textContent = role === "user" ? "🙂" : "🤖";
+
+    const col = document.createElement("div");
+    const bubble = document.createElement("div");
+    bubble.className = role === "system" ? "bubble" : "bubble markdown";
+
+    if (text) {
+      if (role === "system") {
+        bubble.appendChild(document.createTextNode(text));
+      } else {
+        bubble.innerHTML = DOMPurify.sanitize(marked.parse(text));
+      }
+    }
+
+    (attachments || []).forEach(att => {
+      const filename = att.filename || att.path || "attachment";
+      const dataUrl = att.dataUrl || (
+        att.data ? `data:${att.media_type || "application/octet-stream"};base64,${att.data}` : ""
+      );
+      if (att.media_type && att.media_type.startsWith("image/") && dataUrl) {
+        const img = document.createElement("img");
+        img.className = "att-preview";
+        img.src = dataUrl;
+        img.alt = filename;
+        bubble.appendChild(img);
+      } else {
+        const chip = document.createElement(dataUrl ? "a" : "span");
+        chip.className = "att-chip";
+        chip.textContent = `📄 ${filename}`;
+        if (dataUrl) {
+          chip.href = dataUrl;
+          chip.download = filename;
+        }
+        bubble.appendChild(chip);
+      }
+    });
+
+    const time = document.createElement("div");
+    time.className = "msg-time";
+    time.textContent = new Date().toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" });
+
+    col.appendChild(bubble);
+    col.appendChild(time);
+
+    if (role === "user") {
+      row.appendChild(col);
+      row.appendChild(avatar);
+    } else {
+      row.appendChild(avatar);
+      row.appendChild(col);
+    }
+
+    messagesEl.appendChild(row);
+    scrollToBottom();
+  }
+
+  function addSystemMsg(text) {
+    const row = document.createElement("div");
+    row.className = "message-row system";
+    const bubble = document.createElement("div");
+    bubble.className = "bubble";
+    bubble.textContent = text;
+    row.appendChild(bubble);
+    messagesEl.appendChild(row);
+    scrollToBottom();
+  }
+
+  function showTyping() {
+    typingIndicator.className = "typing-indicator show";
+    scrollToBottom();
+  }
+
+  function hideTyping() {
+    typingIndicator.className = "typing-indicator";
+  }
+
+  function scrollToBottom() {
+    messagesEl.scrollTop = messagesEl.scrollHeight;
+  }
+
+  function renderPendingAttachments() {
+    pendingAttachmentsEl.innerHTML = "";
+    attachBtn.classList.toggle("has-files", pendingFiles.length > 0);
+    pendingFiles.forEach((f, idx) => {
+      const chip = document.createElement("div");
+      chip.className = "pending-chip";
+      if (f.media_type.startsWith("image/")) {
+        const img = document.createElement("img");
+        img.src = f.dataUrl;
+        chip.appendChild(img);
+      }
+      const name = document.createElement("span");
+      name.textContent = f.filename;
+      chip.appendChild(name);
+      const rm = document.createElement("span");
+      rm.className = "remove-att";
+      rm.textContent = "×";
+      rm.addEventListener("click", () => {
+        pendingFiles.splice(idx, 1);
+        renderPendingAttachments();
+      });
+      chip.appendChild(rm);
+      pendingAttachmentsEl.appendChild(chip);
+    });
+  }
+
+  function readFileAsBase64(file) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        const dataUrl = e.target.result;
+        // dataUrl = "data:<media_type>;base64,<data>"
+        const comma = dataUrl.indexOf(",");
+        const base64 = dataUrl.substring(comma + 1);
+        resolve({ dataUrl, base64 });
+      };
+      reader.onerror = reject;
+      reader.readAsDataURL(file);
+    });
+  }
+
+  attachBtn.addEventListener("click", () => fileInput.click());
+
+  fileInput.addEventListener("change", async () => {
+    const files = Array.from(fileInput.files);
+    for (const file of files) {
+      try {
+        const { dataUrl, base64 } = await readFileAsBase64(file);
+        pendingFiles.push({
+          filename: file.name,
+          media_type: file.type || "application/octet-stream",
+          data: base64,
+          dataUrl,
+        });
+      } catch (e) {
+        addSystemMsg(`读取文件失败: ${file.name}`);
+      }
+    }
+    fileInput.value = "";
+    renderPendingAttachments();
+  });
+
+  function isConnected() {
+    if (curTransport() === "sse") return es && es.readyState === EventSource.OPEN;
+    return ws && ws.readyState === WebSocket.OPEN;
+  }
+
+  // 统一出口：WS 走 socket，SSE 走 POST /messages（入站 REST 通道）。
+  function deliver(message, attachments) {
+    const apiAttachments = attachments.map(f => ({
+      filename: f.filename,
+      media_type: f.media_type,
+      data: f.data,
+    }));
+    if (curTransport() === "sse") {
+      return fetch(`http://${curServer()}/messages`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          sender_id: curUserId(),
+          content: message,
+          attachments: apiAttachments,
+        }),
+      }).catch(() => addSystemMsg("消息发送失败，请检查连接"));
+    }
+    ws.send(JSON.stringify({ message, attachments: apiAttachments }));
+  }
+
+  function sendMessage() {
+    const text = msgInput.value.trim();
+    const hasAttachments = pendingFiles.length > 0;
+    if (!text && !hasAttachments) return;
+    if (!isConnected()) return;
+
+    const attachmentsCopy = [...pendingFiles];
+    addMessage("user", text, attachmentsCopy);
+    deliver(text, attachmentsCopy);
+
+    msgInput.value = "";
+    msgInput.style.height = "auto";
+    pendingFiles = [];
+    renderPendingAttachments();
+    showTyping();
+  }
+
+  msgInput.addEventListener("input", () => {
+    msgInput.style.height = "auto";
+    msgInput.style.height = Math.min(msgInput.scrollHeight, 120) + "px";
+  });
+
+  msgInput.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      sendMessage();
+    }
+  });
+
+  sendBtn.addEventListener("click", sendMessage);
+
+  function reconnect() {
+    clearCountdown();
+    clearConnNotice();
+    hasConnected = false; // show identity confirmation for the new server/user
+    if (ws) {
+      ws.onclose = null; // detach so this manual close doesn't trigger a reconnect loop
+      ws.close();
+      ws = null;
+    }
+    if (es) {
+      es.onerror = null; // detach so the manual close doesn't flip status to disconnected
+      es.close();
+      es = null;
+    }
+    connect();
+  }
+
+  userIdInput.addEventListener("change", reconnect);
+  serverInput.addEventListener("change", reconnect);
+  transportSelect.addEventListener("change", reconnect);
+
+  connect();
+</script>
+</body>
+</html>

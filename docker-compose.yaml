@@ -1,0 +1,25 @@
+services:
+  coworker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: coworker
+    container_name: coworker
+    restart: unless-stopped
+    ports:
+      # The container needs 0.0.0.0 internally; keep the host port private by default.
+      - "127.0.0.1:8000:8000"
+    environment:
+      - API__HOST=0.0.0.0
+      - HF_HOME=/app/.cache/huggingface
+      - TZ=Asia/Shanghai
+    volumes:
+      - .:/app
+      - type: volume
+        source: coworker-home
+        target: /root
+        volume:
+          nocopy: true
+
+volumes:
+  coworker-home:

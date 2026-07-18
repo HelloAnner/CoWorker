@@ -1,0 +1,49 @@
+# Version-control, agent, and editor state
+.git/
+.agents/
+.codex/
+.claude/
+.cargo/
+.vscode/
+.idea/
+
+# Secrets and machine-local configuration
+.env*
+provider.json
+providers.json
+credentials/
+*.pem
+*.key
+*.p12
+*.pfx
+
+# Runtime data and local experiments
+.coworker/*
+!.coworker/subconscious/
+!.coworker/subconscious/**
+data/
+apps/explore-lab/backend/data/
+scratch/
+tmp/
+*.sqlite*
+*.db
+*.log
+*.bak
+*.remote
+
+# Build and tool output
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+.cache/
+.playwright-cli/
+.pytest_cache/
+.pytest-tmp/
+.mypy_cache/
+.ruff_cache/
+node_modules/
+target/
+dist/
+build/
+*.egg-info/
