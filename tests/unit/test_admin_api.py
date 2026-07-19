@@ -41,7 +41,6 @@ def _client(tmp_path, *, providers_file: str = ""):
         skill_loader=None,
         palace_loader=None,
         mode_loader=None,
-        collector=None,
     )
     app = FastAPI()
     app.include_router(admin.router)
@@ -292,7 +291,6 @@ def test_overview_uses_short_term_configured_token_capacity(tmp_path):
         skill_loader=None,
         palace_loader=None,
         mode_loader=None,
-        collector=None,
     )
 
     response = client.get(
@@ -408,7 +406,6 @@ def test_admin_can_add_and_delete_pinned_context(tmp_path):
         skill_loader=None,
         palace_loader=None,
         mode_loader=None,
-        collector=None,
     )
     headers = {"Authorization": "Bearer secret"}
 
@@ -443,7 +440,7 @@ def test_short_term_memory_falls_back_to_estimate_without_latest_usage(tmp_path)
     )
     admin.setup_admin(
         agent=agent, brain=brain, config=config, alarm_manager=None,
-        skill_loader=None, palace_loader=None, mode_loader=None, collector=None,
+        skill_loader=None, palace_loader=None, mode_loader=None,
     )
 
     body = client.get(
@@ -476,7 +473,6 @@ def test_content_registry_includes_parsed_metadata(tmp_path):
         skill_loader=SkillLoader(str(skills_dir)),
         palace_loader=None,
         mode_loader=None,
-        collector=None,
     )
 
     response = client.get(
@@ -508,7 +504,7 @@ def test_content_folder_text_files_can_be_managed_safely(tmp_path):
     admin.setup_admin(
         agent=SimpleNamespace(_identity=_Identity()), brain=SimpleNamespace(), config=config,
         alarm_manager=None, skill_loader=SkillLoader(str(skills_dir)), palace_loader=None,
-        mode_loader=None, collector=None,
+        mode_loader=None,
     )
     headers = {"Authorization": "Bearer secret"}
 
@@ -538,3 +534,94 @@ def test_content_folder_text_files_can_be_managed_safely(tmp_path):
         "/api/admin/content/skills/browser", headers=headers,
     ).status_code == 200
     assert not skill_dir.exists()
+
+
+def test_admin_interaction_history_pages_every_shard_and_loads_detail(tmp_path):
+    client, config = _client(tmp_path)
+    logs_dir = Path(config.agent.logs_dir)
+    logs_dir.mkdir(parents=True)
+    archived = [
+        {"type": "message_in", "seq": 0, "ts": "2026-07-01T09:00:00", "content": "出生"},
+        {"type": "system_prompt", "seq": 1, "ts": "2026-07-01T09:01:00", "content": "系统提示"},
+        {"type": "tool_call", "seq": 2, "ts": "2026-07-01T09:02:00", "name": "read_file"},
+    ]
+    active = [
+        {"type": "tool_result", "seq": 3, "ts": "2026-07-01T09:03:00", "name": "read_file", "content": "ok"},
+        {"type": "llm_response", "seq": 4, "ts": "2026-07-01T09:04:00", "content": "现在"},
+    ]
+    (logs_dir / "interactions-000001.jsonl").write_text(
+        "\n".join(json.dumps(item, ensure_ascii=False) for item in archived) + "\n",
+        encoding="utf-8",
+    )
+    (logs_dir / "interactions.jsonl").write_text(
+        "\n".join(json.dumps(item, ensure_ascii=False) for item in active) + "\n",
+        encoding="utf-8",
+    )
+    headers = {"Authorization": "Bearer secret"}
+
+    first = client.get("/api/admin/interactions?limit=2", headers=headers)
+    assert first.status_code == 200
+    assert [item["seq"] for item in first.json()["events"]] == [4, 3]
+    assert first.json()["next_cursor"]
+    assert first.json()["sequence"] == {"first": 0, "latest": 4, "total": 5}
+
+    second = client.get(
+        "/api/admin/interactions?limit=2&cursor=" + first.json()["next_cursor"],
+        headers=headers,
+    )
+    assert [item["seq"] for item in second.json()["events"]] == [2, 1]
+    assert second.json()["events"][1]["type"] == "system_prompt"
+
+    third = client.get(
+        "/api/admin/interactions?limit=2&cursor=" + second.json()["next_cursor"],
+        headers=headers,
+    )
+    assert [item["seq"] for item in third.json()["events"]] == [0]
+    assert third.json()["has_more"] is False
+
+    detail = client.get("/api/admin/interactions/1", headers=headers)
+    assert detail.status_code == 200
+    assert detail.json()["entry"]["content"] == "系统提示"
+
+
+def test_admin_interaction_history_rejects_invalid_cursor(tmp_path):
+    client, _ = _client(tmp_path)
+    response = client.get(
+        "/api/admin/interactions?cursor=not-a-cursor",
+        headers={"Authorization": "Bearer secret"},
+    )
+    assert response.status_code == 400
+
+
+def test_admin_interaction_history_can_jump_to_a_sequence_range(tmp_path):
+    client, config = _client(tmp_path)
+    logs_dir = Path(config.agent.logs_dir)
+    logs_dir.mkdir(parents=True)
+    (logs_dir / "interactions-000001.jsonl").write_text(
+        "\n".join(json.dumps({"seq": seq, "ts": f"2026-07-01T09:0{seq}:00", "type": "message_in"}) for seq in range(3)) + "\n",
+        encoding="utf-8",
+    )
+    (logs_dir / "interactions.jsonl").write_text(
+        "\n".join(json.dumps({"seq": seq, "ts": f"2026-07-01T09:0{seq}:00", "type": "tool_result"}) for seq in range(3, 5)) + "\n",
+        encoding="utf-8",
+    )
+    headers = {"Authorization": "Bearer secret"}
+
+    response = client.get(
+        "/api/admin/interactions?limit=100&seq_start=1&seq_end=3",
+        headers=headers,
+    )
+
+    assert response.status_code == 200
+    assert [item["seq"] for item in response.json()["events"]] == [3, 2, 1]
+    assert response.json()["has_more"] is False
+    assert client.get(
+        "/api/admin/interactions?seq_start=4&seq_end=3",
+        headers=headers,
+    ).status_code == 400
+
+
+def test_legacy_admin_logs_endpoint_is_not_available(tmp_path):
+    client, _ = _client(tmp_path)
+    response = client.get("/api/admin/logs", headers={"Authorization": "Bearer secret"})
+    assert response.status_code == 404

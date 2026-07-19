@@ -714,7 +714,6 @@ async def _main() -> bool:
         skill_loader=skill_loader,
         palace_loader=palace_loader,
         mode_loader=mode_loader,
-        collector=event_collector,
     )
     api_app.setup_desktop_updates(config.desktop_updates, config.admin.token)
     api_app.setup_ws(inbox_watcher, communicate)

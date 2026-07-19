@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+import base64
+import binascii
 import json
 import re
 import secrets
@@ -16,11 +18,11 @@ from typing import TYPE_CHECKING, Any, Literal, TypedDict, cast
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
 from pydantic import BaseModel, Field, ValidationError
 
+from coworker.agent.log_store import LogPageCursor, LogStore
 from coworker.core.config import Config, _deep_merge, load_admin_overrides
 
 if TYPE_CHECKING:
     from coworker.agent.bubble import Bubble, BubbleStore
-    from coworker.agent.event_collector import RuntimeEventCollector
     from coworker.agent.loop import AgentLoop
     from coworker.agent.subconscious_mode import SubconsciousMode, SubconsciousModeLoader
     from coworker.brain.brain import Brain
@@ -43,7 +45,6 @@ _alarms: AlarmManager | None = None
 _skill_loader: SkillLoader | None = None
 _palace_loader: PalaceLoader | None = None
 _mode_loader: SubconsciousModeLoader | None = None
-_collector: RuntimeEventCollector | None = None
 _process_started_at: datetime = datetime.now()
 _pending_restart: bool = False
 
@@ -161,9 +162,8 @@ def setup_admin(
     skill_loader: SkillLoader,
     palace_loader: PalaceLoader,
     mode_loader: SubconsciousModeLoader,
-    collector: RuntimeEventCollector,
 ) -> None:
-    global _agent, _brain, _config, _alarms, _skill_loader, _palace_loader, _mode_loader, _collector, _pending_restart
+    global _agent, _brain, _config, _alarms, _skill_loader, _palace_loader, _mode_loader, _pending_restart
     _agent = agent
     _brain = brain
     _config = config
@@ -171,7 +171,6 @@ def setup_admin(
     _skill_loader = skill_loader
     _palace_loader = palace_loader
     _mode_loader = mode_loader
-    _collector = collector
     _pending_restart = False
 
 
@@ -530,6 +529,151 @@ def _bubble_logs_dir() -> Path:
 def _subconscious_logs_dir() -> Path:
     logs_dir = _config.agent.logs_dir if _config is not None else "data/logs"
     return Path(logs_dir) / "subconscious" / "bubbles"
+
+
+_INTERACTION_PAGE_SCAN_BYTES = 2 * 1024 * 1024
+_INTERACTION_PREVIEW_CHARS = 480
+_INTERACTION_DETAIL_STRING_CHARS = 32_000
+_INTERACTION_DETAIL_ITEMS = 200
+_INTERACTION_DETAIL_DEPTH = 10
+
+
+def _interaction_logs_dir() -> Path:
+    logs_dir = _config.agent.logs_dir if _config is not None else "data/logs"
+    return Path(logs_dir)
+
+
+@lru_cache(maxsize=8)
+def _interaction_log_store(logs_dir: str) -> LogStore:
+    """Keep shard boundary scans cached across adjacent admin history pages."""
+    return LogStore(logs_dir)
+
+
+def _interaction_sequence_summary(store: LogStore) -> JsonObject:
+    """Return lifetime sequence metadata from cached shard boundaries only."""
+    shards = store.manifest()
+    if not shards:
+        return {"first": None, "latest": None, "total": 0}
+    first = min(shard.seq_min for shard in shards)
+    latest = max(shard.seq_max for shard in shards)
+    # InteractionLogger starts at seq=0 and increments once per emitted record.
+    # ``total`` deliberately reflects that lifetime numbering even if an old
+    # archive was removed and ``first`` is no longer zero.
+    return {"first": first, "latest": latest, "total": latest + 1}
+
+
+def _encode_interaction_cursor(cursor: LogPageCursor | None) -> str | None:
+    if cursor is None:
+        return None
+    payload = {
+        "p": cursor.path,
+        "o": cursor.offset,
+        "s": cursor.before_seq,
+    }
+    raw = json.dumps(payload, separators=(",", ":")).encode("utf-8")
+    return base64.urlsafe_b64encode(raw).decode("ascii").rstrip("=")
+
+
+def _decode_interaction_cursor(value: str | None) -> LogPageCursor | None:
+    if not value:
+        return None
+    if len(value) > 512:
+        raise HTTPException(status_code=400, detail="日志游标无效")
+    try:
+        padded = value + "=" * (-len(value) % 4)
+        payload = json.loads(base64.urlsafe_b64decode(padded).decode("utf-8"))
+        path = payload["p"]
+        offset = payload["o"]
+        before_seq = payload.get("s")
+    except (binascii.Error, KeyError, TypeError, ValueError, UnicodeDecodeError):
+        raise HTTPException(status_code=400, detail="日志游标无效") from None
+    if (
+        not isinstance(path, str)
+        or not path
+        or Path(path).name != path
+        or type(offset) is not int
+        or offset < 0
+        or (before_seq is not None and (type(before_seq) is not int or before_seq < 0))
+    ):
+        raise HTTPException(status_code=400, detail="日志游标无效")
+    return LogPageCursor(path=path, offset=offset, before_seq=before_seq)
+
+
+def _interaction_text(value: object, limit: int = _INTERACTION_PREVIEW_CHARS) -> str:
+    if isinstance(value, str):
+        text = value
+    else:
+        try:
+            text = json.dumps(value, ensure_ascii=False, default=str, separators=(",", ":"))
+        except (TypeError, ValueError):
+            text = str(value)
+    text = " ".join(text.split())
+    return text if len(text) <= limit else text[:limit] + "…"
+
+
+def _interaction_preview(entry: Mapping[str, object]) -> str:
+    for key in ("content", "reasoning_content", "result", "goal", "message", "query", "label"):
+        value = entry.get(key)
+        if value not in (None, "", [], {}):
+            return _interaction_text(value)
+    name = entry.get("name")
+    arguments = entry.get("arguments")
+    if name:
+        suffix = _interaction_text(arguments, 300) if arguments not in (None, "", {}, []) else ""
+        return f"{name}{' · ' + suffix if suffix else ''}"
+    details = {
+        str(key): value
+        for key, value in entry.items()
+        if key not in {"seq", "ts", "type"}
+    }
+    return _interaction_text(details) if details else "—"
+
+
+def _interaction_list_item(entry: Mapping[str, object]) -> JsonObject:
+    meta: JsonObject = {}
+    for key in (
+        "name", "source", "participant_id", "provider", "model", "cycle", "mode",
+        "operation", "stop_reason", "is_error", "thinking",
+    ):
+        value = entry.get(key)
+        if value not in (None, ""):
+            meta[key] = _interaction_text(value, 120)
+    seq = entry.get("seq")
+    return {
+        "seq": seq if isinstance(seq, int) else None,
+        "ts": str(entry.get("ts") or ""),
+        "type": str(entry.get("type") or "unknown"),
+        "preview": _interaction_preview(entry),
+        "meta": meta,
+    }
+
+
+def _bounded_interaction_value(value: object, state: list[bool], depth: int = 0) -> JsonValue:
+    if depth >= _INTERACTION_DETAIL_DEPTH:
+        state[0] = True
+        return "…（嵌套内容已截断）"
+    if value is None or isinstance(value, bool | int | float):
+        return cast(JsonValue, value)
+    if isinstance(value, str):
+        if len(value) > _INTERACTION_DETAIL_STRING_CHARS:
+            state[0] = True
+            return value[:_INTERACTION_DETAIL_STRING_CHARS] + "…（字段已截断）"
+        return value
+    if isinstance(value, list):
+        items = value[:_INTERACTION_DETAIL_ITEMS]
+        if len(value) > len(items):
+            state[0] = True
+        return [_bounded_interaction_value(item, state, depth + 1) for item in items]
+    if isinstance(value, dict):
+        result: dict[str, JsonValue] = {}
+        for index, (key, item) in enumerate(value.items()):
+            if index >= _INTERACTION_DETAIL_ITEMS:
+                state[0] = True
+                result["…"] = "更多字段已截断"
+                break
+            result[str(key)] = _bounded_interaction_value(item, state, depth + 1)
+        return result
+    return str(value)
 
 
 @lru_cache(maxsize=512)
@@ -1351,27 +1495,86 @@ async def cancel_alarm(
     return {"cancelled": True}
 
 
-@router.get("/logs")
-async def get_logs(
-    limit: int = Query(default=100, ge=1, le=500),
-    days: int = Query(default=7, ge=1, le=30),
-    event_type: str | None = None,
-    q: str = "",
+@router.get("/interactions")
+async def get_interaction_history(
+    limit: int = Query(default=100, ge=1, le=200),
+    cursor: str | None = Query(default=None, max_length=512),
+    event_type: str | None = Query(default=None, max_length=120),
+    q: str = Query(default="", max_length=500),
+    seq_start: int | None = Query(default=None, ge=0),
+    seq_end: int | None = Query(default=None, ge=0),
     _: None = Depends(require_admin),
 ) -> ApiResponse:
-    if _collector is None:
-        raise HTTPException(status_code=503, detail="Runtime event collector not ready")
-    events = _collector.recent(limit=500, days=days)
-    if event_type:
-        events = [event for event in events if event.get("type") == event_type]
-    if q:
-        needle = q.casefold()
-        events = [
-            event
-            for event in events
-            if needle in json.dumps(event, ensure_ascii=False).casefold()
-        ]
-    return {"events": events[-limit:]}
+    """Page through every interactions.jsonl shard without loading history at once.
+
+    The first page starts at the newest record (or jumps directly to an
+    requested sequence interval). Each following cursor moves toward birth
+    across rotated ``interactions-000001.jsonl`` shards. Searching is
+    deliberately byte-budgeted; a rare match may need several pages, but no
+    single admin request can scan the whole lifetime log.
+    """
+    if seq_start is not None and seq_end is not None and seq_start > seq_end:
+        raise HTTPException(status_code=400, detail="起始序列不能大于结束序列")
+    needle = q.strip().casefold()
+    selected_type = (event_type or "").strip()
+
+    def matches(entry: dict[str, Any]) -> bool:
+        if seq_start is not None or seq_end is not None:
+            try:
+                entry_seq = int(entry.get("seq", -1))
+            except (TypeError, ValueError, OverflowError):
+                return False
+            if (seq_start is not None and entry_seq < seq_start) or (
+                seq_end is not None and entry_seq > seq_end
+            ):
+                return False
+        if selected_type and str(entry.get("type") or "") != selected_type:
+            return False
+        if not needle:
+            return True
+        try:
+            searchable = json.dumps(entry, ensure_ascii=False, default=str)
+        except (TypeError, ValueError):
+            searchable = str(entry)
+        return needle in searchable.casefold()
+
+    store = _interaction_log_store(str(_interaction_logs_dir().resolve()))
+    sequence = _interaction_sequence_summary(store)
+    page = store.read_history_page(
+        limit=limit,
+        cursor=_decode_interaction_cursor(cursor),
+        match=matches if selected_type or needle or seq_start is not None or seq_end is not None else None,
+        max_scan_bytes=_INTERACTION_PAGE_SCAN_BYTES,
+        seq_start=seq_start,
+        seq_end=seq_end,
+    )
+    return {
+        "events": [_interaction_list_item(entry) for entry in page.entries],
+        "next_cursor": _encode_interaction_cursor(page.cursor),
+        "has_more": page.has_more,
+        "scanned_bytes": page.scanned_bytes,
+        "sequence": sequence,
+    }
+
+
+@router.get("/interactions/{seq}")
+async def get_interaction_detail(
+    seq: int,
+    _: None = Depends(require_admin),
+) -> ApiResponse:
+    """Fetch one expanded record only when an administrator asks to inspect it."""
+    if seq < 0:
+        raise HTTPException(status_code=404, detail="日志记录不存在")
+    store = _interaction_log_store(str(_interaction_logs_dir().resolve()))
+    entries, _complete = store.read_seq_range(seq, seq)
+    entry = next((item for item in entries if item.get("seq") == seq), None)
+    if entry is None:
+        raise HTTPException(status_code=404, detail="日志记录不存在")
+    state = [False]
+    return {
+        "entry": _bounded_interaction_value(entry, state),
+        "truncated": state[0],
+    }
 
 
 @router.get("/diagnostics/tasks")

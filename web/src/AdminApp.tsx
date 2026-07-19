@@ -1,6 +1,6 @@
-import { FormEvent, ReactNode, useCallback, useEffect, useMemo, useState } from 'react';
+import { FormEvent, ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  Activity, AlarmClock, ArchiveRestore, Bot, Brain, ChevronRight, CircleGauge,
+  Activity, AlarmClock, ArchiveRestore, Bot, Brain, ChevronLeft, ChevronRight, CircleGauge,
   Check, Clock3, CloudUpload, Database, Download, FileArchive, FileCode2, FileCog, FileText, Fingerprint, FolderOpen, HeartPulse, KeyRound, ListTodo, LogOut,
   MessagesSquare, Orbit, RefreshCw, Save, Search, Settings2, ShieldCheck, SlidersHorizontal,
   Sparkles, TerminalSquare, Trash2, TriangleAlert, Wrench, X, Pencil, Plus, PackageOpen, Rocket, RotateCcw,
@@ -77,7 +77,7 @@ function Login({ onReady }: { onReady: (name: string) => void }) {
     sessionStorage.setItem('coworker-admin-token', token);
     try {
       const result = await api<{ name: string }>('/api/admin/session/verify', { method: 'POST' });
-      onReady(result.name || 'Coworker');
+      onReady(result.name || '');
     } catch (e) {
       sessionStorage.removeItem('coworker-admin-token');
       setError(e instanceof Error ? e.message : t('验证失败'));
@@ -769,13 +769,171 @@ function Logs() {
   const [query, setQuery] = useState('');
   const [debouncedQuery, setDebouncedQuery] = useState('');
   const [type, setType] = useState('');
+  const [seqStartDraft, setSeqStartDraft] = useState('');
+  const [seqEndDraft, setSeqEndDraft] = useState('');
+  const [seqStart, setSeqStart] = useState('');
+  const [seqEnd, setSeqEnd] = useState('');
+  const [sequenceError, setSequenceError] = useState('');
+  const [cursor, setCursor] = useState<string | null>(null);
+  const [newerCursors, setNewerCursors] = useState<Array<string | null>>([]);
+  const [page, setPage] = useState<Json | null>(null);
+  const [error, setError] = useState('');
+  const [loading, setLoading] = useState(true);
+  const [refreshKey, setRefreshKey] = useState(0);
+  const [openSeq, setOpenSeq] = useState<number | null>(null);
+  const [details, setDetails] = useState<Record<number, Json>>({});
+  const [detailError, setDetailError] = useState('');
+  const requestVersion = useRef(0);
+  const detailVersion = useRef(0);
   useEffect(() => {
     const timer = window.setTimeout(() => setDebouncedQuery(query), 320);
     return () => window.clearTimeout(timer);
   }, [query]);
-  const { data, error, loading, reload } = useLoad(() => api<Json>('/api/admin/logs?limit=200&event_type=' + type + '&q=' + encodeURIComponent(debouncedQuery)), [type, debouncedQuery]);
-  return <Panel title="运行账本" note="展示经过裁剪和脱敏的持久事件。" action={<div className="log-filters"><select aria-label={t('筛选事件类型')} value={type} onChange={event => setType(event.target.value)}><option value="">{t('全部事件')}</option><option>message_in</option><option>thinking_start</option><option>llm_response</option><option>tool_call</option><option>tool_result</option></select><input aria-label={t('过滤日志内容')} value={query} onChange={event => setQuery(event.target.value)} placeholder={t('过滤内容')} /><button className="icon-btn" aria-label={t('刷新运行账本')} title={t('刷新运行账本')} onClick={() => void reload()}><RefreshCw size={15} /></button></div>}>
-    {loading || !data ? <Loading error={error} /> : <div className="log-table"><div className="log-head" aria-hidden="true"><b>{t('时间')}</b><b>{t('事件')}</b><b>{t('内容')}</b></div>{data.events.map((event: Json) => <div key={event.seq + '-' + event.type}><time>{new Date(event.ts).toLocaleTimeString()}</time><span className={'event-type ' + event.type}>{event.type}</span><code>{event.content || event.name || JSON.stringify(event.arguments || {})}</code></div>)}</div>}
+
+  const applySequenceRange = () => {
+    const normalize = (value: string) => value.trim().replace(/^0+(?=\d)/, '');
+    const start = normalize(seqStartDraft);
+    const end = normalize(seqEndDraft);
+    if ((start && !/^\d+$/.test(start)) || (end && !/^\d+$/.test(end))) {
+      setSequenceError(t('序列号必须是非负整数。'));
+      return;
+    }
+    if (start && end && (start.length > end.length || (start.length === end.length && start > end))) {
+      setSequenceError(t('起始序列不能大于结束序列。'));
+      return;
+    }
+    setSeqStartDraft(start);
+    setSeqEndDraft(end);
+    setSeqStart(start);
+    setSeqEnd(end);
+    setSequenceError('');
+  };
+
+  useEffect(() => {
+    setCursor(null);
+    setNewerCursors([]);
+    setOpenSeq(null);
+    setDetails({});
+    setDetailError('');
+  }, [type, debouncedQuery, seqStart, seqEnd]);
+
+  useEffect(() => {
+    const version = ++requestVersion.current;
+    const params = new URLSearchParams({ limit: '100' });
+    if (type) params.set('event_type', type);
+    if (debouncedQuery) params.set('q', debouncedQuery);
+    if (seqStart) params.set('seq_start', seqStart);
+    if (seqEnd) params.set('seq_end', seqEnd);
+    if (cursor) params.set('cursor', cursor);
+    setLoading(true);
+    setError('');
+    void api<Json>('/api/admin/interactions?' + params.toString())
+      .then(result => {
+        if (version !== requestVersion.current) return;
+        setPage(result);
+        setOpenSeq(null);
+        setDetails({});
+        setDetailError('');
+      })
+      .catch(reason => {
+        if (version !== requestVersion.current) return;
+        setError(reason instanceof Error ? reason.message : t('历史记录加载失败'));
+      })
+      .finally(() => {
+        if (version === requestVersion.current) setLoading(false);
+      });
+  }, [cursor, debouncedQuery, refreshKey, seqEnd, seqStart, type]);
+
+  const showOlder = () => {
+    const next = typeof page?.next_cursor === 'string' ? page.next_cursor : null;
+    if (!next || loading) return;
+    setNewerCursors(items => [...items, cursor]);
+    setCursor(next);
+  };
+  const showNewer = () => {
+    const previous = newerCursors[newerCursors.length - 1];
+    if (previous === undefined || loading) return;
+    setNewerCursors(items => items.slice(0, -1));
+    setCursor(previous);
+  };
+  const toggleDetail = async (event: Json) => {
+    const seq = Number(event.seq);
+    if (!Number.isInteger(seq) || seq < 0) return;
+    if (openSeq === seq) {
+      setOpenSeq(null);
+      return;
+    }
+    setOpenSeq(seq);
+    setDetailError('');
+    if (details[seq]) return;
+    const version = ++detailVersion.current;
+    try {
+      const result = await api<Json>('/api/admin/interactions/' + seq);
+      if (version !== detailVersion.current) return;
+      setDetails(current => ({ ...current, [seq]: result }));
+    } catch (reason) {
+      if (version !== detailVersion.current) return;
+      setDetailError(reason instanceof Error ? reason.message : t('日志详情加载失败'));
+    }
+  };
+  const events = [...(page?.events || [])].reverse();
+  const hasOlder = Boolean(page?.next_cursor);
+  const loadedLabel = page?.has_more
+    ? t('本页 {{count}} 条，可继续向更早的记录回溯。', { count: events.length })
+    : t('本页 {{count}} 条，已到最早记录。', { count: events.length });
+  const sequenceScope = seqStart && seqEnd
+    ? t('序列 {{start}} 至 {{end}}', { start: seqStart, end: seqEnd })
+    : seqStart
+      ? t('序列从 {{start}} 起', { start: seqStart })
+      : seqEnd
+        ? t('序列截至 {{end}}', { end: seqEnd })
+        : '';
+  const sequenceSummary = page?.sequence;
+  const sequenceTotal = Number(sequenceSummary?.total);
+  const sequenceFirst = Number(sequenceSummary?.first);
+  const sequenceLatest = Number(sequenceSummary?.latest);
+  const lifetimeSequenceLabel = page && Number.isInteger(sequenceTotal) && sequenceTotal > 0
+    && Number.isInteger(sequenceFirst) && Number.isInteger(sequenceLatest)
+    ? t('总序列 {{count}} · #{{first}}–#{{latest}}', {
+      count: sequenceTotal.toLocaleString(), first: sequenceFirst.toLocaleString(), latest: sequenceLatest.toLocaleString(),
+    })
+    : page ? t('总序列 0') : '';
+  const searchContinuation = events.length === 0 && hasOlder && (Boolean(type) || Boolean(debouncedQuery) || Boolean(sequenceScope));
+  const continuationLabel = sequenceScope
+    ? t('继续查看范围内更早记录')
+    : searchContinuation
+      ? t('继续搜索更早日志')
+      : t('查看更早记录');
+  return <Panel
+    title="生命全史日志"
+    note="按序列范围直接定位 interactions.jsonl 与轮转分片；每次只加载一个轻量页面。"
+    action={<form className="log-filters history-log-filters" onSubmit={event => { event.preventDefault(); applySequenceRange(); }}>
+      <select aria-label={t('筛选事件类型')} value={type} onChange={event => setType(event.target.value)}>
+        <option value="">{t('全部事件')}</option>
+        <option>message_in</option><option>thinking_start</option><option>llm_response</option><option>tool_call</option><option>tool_result</option><option>system_prompt</option><option>summary_llm_response</option><option>vision_llm_response</option><option>mem0_llm_response</option><option>subconscious_done</option>
+      </select>
+      <input aria-label={t('过滤日志内容')} value={query} onChange={event => setQuery(event.target.value)} placeholder={t('过滤内容')} />
+      <div className="sequence-range" aria-label={t('序列范围')}>
+        <label><span>{t('起始序列')}</span><input aria-label={t('起始序列')} type="number" min="0" step="1" inputMode="numeric" value={seqStartDraft} onChange={event => { setSeqStartDraft(event.target.value); setSequenceError(''); }} placeholder="0" /></label>
+        <span className="sequence-separator" aria-hidden="true">–</span>
+        <label><span>{t('结束序列')}</span><input aria-label={t('结束序列')} type="number" min="0" step="1" inputMode="numeric" value={seqEndDraft} onChange={event => { setSeqEndDraft(event.target.value); setSequenceError(''); }} placeholder={t('当前')} /></label>
+        <button className="ghost mini sequence-locate" type="submit">{t('定位序列')}</button>
+      </div>
+      <button className="icon-btn" type="button" aria-label={t('刷新生命全史日志')} title={t('刷新生命全史日志')} onClick={() => setRefreshKey(value => value + 1)}><RefreshCw size={15} /></button>
+    </form>}
+  >
+    {sequenceError && <div className="notice error history-sequence-error">{sequenceError}</div>}
+    <div className="history-navigator">
+      <div className="history-position"><span className={cursor ? 'history-marker earlier' : 'history-marker'}><Clock3 size={15} /></span><div><b>{cursor ? t('正在回溯更早的记录') : sequenceScope ? t('已定位到指定序列') : t('最新记录')}</b><div className="history-detail-line"><small>{sequenceScope ? sequenceScope + ' · ' + loadedLabel : loadedLabel}</small>{lifetimeSequenceLabel && <span className="history-sequence-total">{lifetimeSequenceLabel}</span>}</div></div></div>
+      <div className="history-actions"><button className="ghost mini" disabled={!newerCursors.length || loading} onClick={showNewer}><ChevronRight size={14} />{t('较新')}</button><button className="ghost mini" disabled={!hasOlder || loading} onClick={showOlder}><ChevronLeft size={14} />{continuationLabel}</button></div>
+    </div>
+    {loading && !page ? <Loading error={error} /> : error ? <Loading error={error} /> : <div className="log-table lifecycle-log-table"><div className="log-head" aria-hidden="true"><b>{t('时间')}</b><b>{t('事件')}</b><b>{t('内容')}</b></div>{events.length ? events.map((event: Json) => {
+      const seq = Number(event.seq);
+      const isOpen = openSeq === seq;
+      const detail = Number.isInteger(seq) ? details[seq] : null;
+      const meta = Object.entries(event.meta || {}).map(([key, value]) => key + ': ' + value).join(' · ');
+      return <article key={String(event.seq) + '-' + event.type} className={isOpen ? 'open' : ''}><time>{event.ts ? new Date(event.ts).toLocaleString() : '—'}</time><span className={'event-type ' + event.type}>{event.type}</span><div className="interaction-row-copy"><code title={event.preview}>{event.preview}</code>{meta && <small>{meta}</small>}</div>{Number.isInteger(seq) && <button className="ghost mini interaction-detail-toggle" aria-expanded={isOpen} onClick={() => void toggleDetail(event)}>{isOpen ? t('收起') : t('详情')}</button>}{isOpen && <div className="interaction-detail">{detailError ? <p className="notice error">{detailError}</p> : detail ? <><pre>{JSON.stringify(detail.entry, null, 2)}</pre>{detail.truncated && <small>{t('为了保持页面流畅，这条超长记录已在详情中截断。')}</small>}</> : <div className="bubble-history-loading">{t('正在读取日志详情…')}</div>}</div>}</article>;
+    }) : <div className="history-empty"><Empty text={searchContinuation ? '这个扫描窗口里没有符合条件的记录；继续向更早的日志查找。' : '这里还没有交互日志。'} /></div>}</div>}
   </Panel>;
 }
 
@@ -1380,13 +1538,13 @@ export default function AdminApp() {
   const [ready, setReady] = useState(false);
   const [sessionChecked, setSessionChecked] = useState(false);
   const [bootstrap, setBootstrap] = useState<Json | null>(null);
-  const [name, setName] = useState('Coworker');
+  const [name, setName] = useState('');
   const [section, setSection] = useState<Section>(sectionFromLocation);
   const [lifeState, setLifeState] = useState<LifeState>('quiet');
   useEffect(() => {
     if (!storedToken()) { setSessionChecked(true); return; }
     api<{ name: string }>('/api/admin/session/verify', { method: 'POST' })
-      .then(r => { setName(r.name || 'Coworker'); setReady(true); })
+      .then(r => { setName(r.name || ''); setReady(true); })
       .catch(() => sessionStorage.removeItem('coworker-admin-token'))
       .finally(() => setSessionChecked(true));
   }, []);

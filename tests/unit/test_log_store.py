@@ -171,6 +171,104 @@ class TestLogStoreRead:
         assert complete is True
         assert [e["seq"] for e in entries] == [2, 3, 4, 5]
 
+    def test_history_pages_cross_shards_without_repeating_entries(self, tmp_path):
+        _write_shard(tmp_path / "interactions.jsonl", [
+            _entry(0, 0, content="a"), _entry(1, 1, content="b"), _entry(2, 2, content="c"),
+        ])
+        _write_shard(tmp_path / "interactions-000001.jsonl", [
+            _entry(3, 3, content="d"), _entry(4, 4, content="e"), _entry(5, 5, content="f"),
+        ])
+        store = LogStore(tmp_path)
+
+        seen: list[int] = []
+        cursor = None
+        while True:
+            page = store.read_history_page(limit=2, cursor=cursor)
+            seen.extend(int(entry["seq"]) for entry in page.entries)
+            if not page.has_more:
+                break
+            assert page.cursor is not None
+            cursor = page.cursor
+
+        assert seen == [5, 4, 3, 2, 1, 0]
+
+    def test_history_page_stops_after_a_bounded_tail_scan(self, tmp_path):
+        path = tmp_path / "interactions.jsonl"
+        _write_shard(
+            path,
+            [_entry(index, index % 60, content="x" * 2_000) for index in range(1_000)],
+        )
+
+        page = LogStore(tmp_path).read_history_page(limit=1)
+
+        assert [entry["seq"] for entry in page.entries] == [999]
+        assert page.scanned_bytes < path.stat().st_size
+        assert page.cursor is not None
+
+    def test_history_page_jumps_directly_to_a_sequence_range(self, tmp_path):
+        path = tmp_path / "interactions.jsonl"
+        _write_shard(
+            path,
+            [_entry(index, index % 60, content="x" * 2_000) for index in range(1_000)],
+        )
+
+        page = LogStore(tmp_path).read_history_page(
+            limit=2,
+            seq_start=100,
+            seq_end=101,
+            max_scan_bytes=64 * 1024,
+        )
+
+        assert [entry["seq"] for entry in page.entries] == [101, 100]
+        assert page.has_more is False
+        assert page.scanned_bytes <= 64 * 1024
+
+    def test_history_cursor_survives_a_live_shard_rotation(self, tmp_path):
+        active = tmp_path / "interactions.jsonl"
+        _write_shard(active, [_entry(index, index, content=str(index)) for index in range(3, 6)])
+        _write_shard(
+            tmp_path / "interactions-000001.jsonl",
+            [_entry(index, index, content=str(index)) for index in range(3)],
+        )
+        store = LogStore(tmp_path)
+
+        first = store.read_history_page(limit=2)
+        assert [entry["seq"] for entry in first.entries] == [5, 4]
+        assert first.cursor is not None
+
+        active.rename(tmp_path / "interactions-000002.jsonl")
+        _write_shard(active, [_entry(6, 6, content="6")])
+
+        resumed = store.read_history_page(limit=2, cursor=first.cursor)
+        assert [entry["seq"] for entry in resumed.entries] == [3, 2]
+
+    def test_history_page_can_continue_a_bounded_search(self, tmp_path):
+        _write_shard(
+            tmp_path / "interactions.jsonl",
+            [
+                _entry(index, index % 60, content="needle" if index == 1 else "x" * 2_000)
+                for index in range(120)
+            ],
+        )
+        store = LogStore(tmp_path)
+        cursor = None
+        found: list[int] = []
+
+        for _ in range(8):
+            page = store.read_history_page(
+                limit=1,
+                cursor=cursor,
+                match=lambda entry: "needle" in str(entry.get("content", "")),
+                max_scan_bytes=64 * 1024,
+            )
+            found.extend(int(entry["seq"]) for entry in page.entries)
+            if found or not page.has_more:
+                break
+            assert page.cursor is not None
+            cursor = page.cursor
+
+        assert found == [1]
+
     def test_iter_entries_after_uses_seq_checkpoint(self, tmp_path):
         path = tmp_path / "interactions.jsonl"
         _write_shard(path, [_entry(0, 0, content="a"), _entry(1, 1, content="b")])
