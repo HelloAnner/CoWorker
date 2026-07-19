@@ -4,11 +4,11 @@ import asyncio
 import json
 import re
 import uuid
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Iterable
 from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from loguru import logger
 
@@ -24,11 +24,108 @@ _UNSAFE_OUTBOX_CHARS_RE = re.compile(r'[<>:"/\\|?*\x00-\x1f]+')
 _SAFE_PARTICIPANT_CHARS_RE = re.compile(r"[^a-zA-Z0-9_.:-]+")
 
 
+if TYPE_CHECKING:
+    from coworker.core.tool_scope import ToolScope
+
+
+class _BoundCommunicateTool(Tool):
+    """A bubble-scoped communicator restricted to one pre-authorized recipient."""
+
+    def __init__(
+        self,
+        delegate: CommunicateTool,
+        participant_id: str,
+        conversation_id: str = "",
+        message_prefix: str = "",
+        message_extra: dict[str, Any] | None = None,
+    ) -> None:
+        self._delegate = delegate
+        self._participant_id = participant_id
+        self._conversation_id = conversation_id
+        self._message_prefix = message_prefix
+        self._message_extra = dict(message_extra or {})
+
+    @property
+    def definition(self) -> ToolDefinition:
+        base = self._delegate.definition
+        properties = dict(base.parameters["properties"])
+        properties["participant_id"] = {
+            "type": "string",
+            "description": "可选；此泡泡已固定绑定通信对象，不能改为其他对象。",
+        }
+        parameters = {
+            **base.parameters,
+            "properties": properties,
+            "required": [
+                name for name in base.parameters.get("required", []) if name != "participant_id"
+            ],
+        }
+        conversation_note = (
+            f"，会话固定为 {self._conversation_id}" if self._conversation_id else ""
+        )
+        return ToolDefinition(
+            name=base.name,
+            description=(
+                f"向此泡泡绑定的通信对象发送消息（对象固定为 {self._participant_id}"
+                f"{conversation_note}）。不得联系其他对象。"
+            ),
+            parameters=parameters,
+        )
+
+    async def execute(
+        self,
+        participant_id: str = "",
+        message: str = "",
+        conversation_id: str | None = None,
+        attachments: list[dict[str, Any]] | None = None,
+        extra: dict[str, Any] | None = None,
+        **_,
+    ) -> ToolResult:
+        requested_participant = participant_id.strip() if isinstance(participant_id, str) else ""
+        if requested_participant and requested_participant != self._participant_id:
+            return ToolResult(
+                tool_call_id="",
+                content="此泡泡只能向已绑定的通信对象发送消息，不能改用其他 participant_id。",
+                is_error=True,
+            )
+
+        requested_conversation = conversation_id.strip() if isinstance(conversation_id, str) else ""
+        if self._conversation_id and requested_conversation and (
+            requested_conversation != self._conversation_id
+        ):
+            return ToolResult(
+                tool_call_id="",
+                content="此泡泡只能向已绑定的 conversation_id 发送消息。",
+                is_error=True,
+            )
+
+        outgoing_message = message
+        if self._message_prefix:
+            if outgoing_message:
+                if not outgoing_message.startswith(self._message_prefix):
+                    outgoing_message = f"{self._message_prefix}{outgoing_message}"
+            elif attachments:
+                outgoing_message = f"{self._message_prefix}（附件）"
+
+        if extra is not None and not isinstance(extra, dict):
+            return ToolResult(tool_call_id="", content="extra 必须是对象。", is_error=True)
+        outgoing_extra = dict(extra or {})
+        outgoing_extra.update(self._message_extra)
+        return await self._delegate.execute(
+            participant_id=self._participant_id,
+            message=outgoing_message,
+            conversation_id=self._conversation_id or requested_conversation or None,
+            attachments=attachments,
+            extra=outgoing_extra,
+        )
+
+
 class CommunicateTool(Tool):
     def __init__(self, outbox_dir: str) -> None:
         self._outbox = Path(outbox_dir)
         self._registrations_path = self._outbox.parent / "communicate_registrations.json"
         self._ws_connections: dict[str, asyncio.Queue] = {}
+        self._stream_transports: dict[str, str] = {}
         self._senders: dict[str, Sender] = {}
         self._checkers: dict[str, Checker] = {}
         self._connection_listeners: list[ConnectionListener] = []
@@ -36,15 +133,39 @@ class CommunicateTool(Tool):
     def add_connection_listener(self, listener: ConnectionListener) -> None:
         self._connection_listeners.append(listener)
 
-    def register_ws(self, participant_id: str, queue: asyncio.Queue) -> bool:
+    def fork(self, scope: ToolScope) -> Tool:
+        participant_id = str(getattr(scope, "communicate_participant_id", "")).strip()
+        if not participant_id:
+            return self
+        conversation_id = str(getattr(scope, "communicate_conversation_id", "")).strip()
+        message_prefix = str(getattr(scope, "communicate_message_prefix", ""))
+        message_extra = getattr(scope, "communicate_message_extra", {})
+        return _BoundCommunicateTool(
+            self,
+            participant_id,
+            conversation_id,
+            message_prefix,
+            message_extra if isinstance(message_extra, dict) else {},
+        )
+
+    def register_ws(
+        self,
+        participant_id: str,
+        queue: asyncio.Queue,
+        *,
+        transport: str = "websocket",
+    ) -> bool:
         """Register an outbound queue for a participant.
 
         The first live connection owns the participant_id. Later SSE/WS
         connections using the same id are rejected instead of replacing it.
         """
+        if transport not in {"websocket", "sse"}:
+            raise ValueError(f"unsupported stream transport: {transport}")
         if participant_id in self._ws_connections:
             return False
         self._ws_connections[participant_id] = queue
+        self._stream_transports[participant_id] = transport
         self._notify_connection_listeners()
         return True
 
@@ -57,10 +178,27 @@ class CommunicateTool(Tool):
         if participant_id not in self._ws_connections:
             return
         self._ws_connections.pop(participant_id, None)
+        self._stream_transports.pop(participant_id, None)
         self._notify_connection_listeners()
 
     def outbound_queue(self, participant_id: str) -> asyncio.Queue | None:
         return self._ws_connections.get(participant_id)
+
+    def live_stream_transport(self, participant_id: str) -> str | None:
+        """Return the transport of a participant's current outbound reply stream."""
+        return self._stream_transports.get(participant_id)
+
+    def has_live_stream_connection(
+        self,
+        participant_id: str,
+        *,
+        transports: Iterable[str] | None = None,
+    ) -> bool:
+        """Whether a participant has a live matching WebSocket or SSE reply stream."""
+        transport = self.live_stream_transport(participant_id)
+        if transport is None:
+            return False
+        return transports is None or transport in set(transports)
 
     def register_sender(self, prefix: str, sender: Sender, checker: Checker | None = None) -> None:
         """注册一个按 participant_id 前缀路由的发送器（如 wecom: → 企微 runner.sender）。

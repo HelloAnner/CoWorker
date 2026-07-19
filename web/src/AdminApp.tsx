@@ -674,7 +674,26 @@ function BubbleRecord({ bubble, reload, scope, coworkerName }: { bubble: Json; r
   const model = [bubble.provider, bubble.model].filter(Boolean).join('/') || t('模型未记录');
   const createdAt = bubble.created_at ? t(' · {{time}}', { time: new Date(bubble.created_at).toLocaleString() }) : '';
   return <article className={'bubble-record ' + (open ? 'open' : '')}>
-    <div className="bubble-record-head"><div className="record-main"><div className="bubble-record-tags"><span className={'status-pill ' + bubble.status}>{t(BUBBLE_STATUS[bubble.status] || bubble.status)}</span>{bubble.mode && <span className="bubble-mode">{bubble.mode}</span>}</div><b className="bubble-record-title" title={bubble.goal}>{bubble.goal}</b><small className="bubble-record-meta">{t('ID {{id}} · {{model}} · 执行 {{cycles}} 轮 · {{seconds}} 秒', { id: bubble.id, model, cycles: bubble.cycles_used, seconds: Math.round(bubble.elapsed_seconds || 0) })}{createdAt}</small></div><div className="row-actions"><button className="ghost mini" aria-expanded={open} onClick={() => void loadHistory()}>{open ? t('收起记录') : t('查看记录')}</button>{scope === 'bubbles' && bubble.status === 'running' && <button className="danger-outline" onClick={async () => { if (confirm(t('取消 Bubble {{id}}？已完成的局部结果会保留。', { id: bubble.id }))) { await api('/api/admin/bubbles/' + bubble.id + '/cancel', { method: 'POST' }); await reload(); } }}>{t('取消')}</button>}</div></div>
+    <div className="bubble-record-head">
+      <div className="record-main">
+        <div className="bubble-record-tags">
+          <span className={'status-pill ' + bubble.status}>{t(BUBBLE_STATUS[bubble.status] || bubble.status)}</span>
+          {bubble.mode && <span className="bubble-mode">{bubble.mode}</span>}
+          {bubble.handoff_transparency && <span className="bubble-handoff-tag"><ShieldCheck size={11} />{t('透明转交')}</span>}
+        </div>
+        <b className="bubble-record-title" title={bubble.goal}>{bubble.goal}</b>
+        {(bubble.participant_id || bubble.conversation_id || bubble.resume_count) && <div className="bubble-record-routing">
+          {bubble.participant_id && <span title={bubble.participant_id}><MessagesSquare size={11} />{t('对象')}<code>{bubble.participant_id}</code></span>}
+          {bubble.conversation_id && <span title={bubble.conversation_id}>{t('会话')}<code>{bubble.conversation_id}</code></span>}
+          {bubble.resume_count > 0 && <span><RotateCcw size={11} />{t('续跑 {{count}} 次', { count: bubble.resume_count })}</span>}
+        </div>}
+        <small className="bubble-record-meta">{t('ID {{id}} · {{model}} · 执行 {{cycles}} 轮 · {{seconds}} 秒', { id: bubble.id, model, cycles: bubble.cycles_used, seconds: Math.round(bubble.elapsed_seconds || 0) })}{createdAt}</small>
+      </div>
+      <div className="row-actions">
+        <button className="ghost mini" aria-expanded={open} onClick={() => void loadHistory()}>{open ? t('收起记录') : t('查看记录')}</button>
+        {scope === 'bubbles' && bubble.status === 'running' && <button className="danger-outline" onClick={async () => { if (confirm(t('取消 Bubble {{id}}？已完成的局部结果会保留。', { id: bubble.id }))) { await api('/api/admin/bubbles/' + bubble.id + '/cancel', { method: 'POST' }); await reload(); } }}>{t('取消')}</button>}
+      </div>
+    </div>
     {open && <div className="bubble-history">{historyError ? <div className="notice error">{historyError}</div> : messages ? <div className="short-message-list">{messages.map((message, index) => <MemoryMessage message={message} index={index} defaultOpen={index >= messages.length - 3} coworkerName={coworkerName} key={message.timestamp + '-' + message.index} />)}</div> : <div className="bubble-history-loading">{t('正在读取历史记录…')}</div>}</div>}
   </article>;
 }

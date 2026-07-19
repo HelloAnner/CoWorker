@@ -19,6 +19,13 @@ export type TimelineAttachment = {
   reason: string | null;
 };
 
+export type BubbleTimelineMeta = {
+  id: string;
+  kind: "handoff" | "reply";
+  phase: "start" | "end" | null;
+  resumed: boolean;
+};
+
 export type TimelineMessage = {
   id: string;
   timestamp: string;
@@ -33,6 +40,7 @@ export type TimelineMessage = {
   streaming: boolean;
   tool_name?: string | null;
   is_error?: boolean;
+  bubble?: BubbleTimelineMeta | null;
 };
 
 export type View = "status" | "config" | "sessions" | "logs";

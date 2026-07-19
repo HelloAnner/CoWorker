@@ -8,7 +8,13 @@ from typing import TYPE_CHECKING
 
 from loguru import logger
 
-from coworker.core.types import Message, SummaryResult
+from coworker.agent.bubble_handoff import (
+    BubbleHandoffNotifier,
+    bubble_reply_fallback_prefix,
+    bubble_reply_message_extra,
+)
+from coworker.agent.incoming_content import build_content_blocks
+from coworker.core.types import IncomingEvent, Message, SummaryResult
 
 if TYPE_CHECKING:
     from coworker.agent.bubble import Bubble, BubbleStore
@@ -19,6 +25,7 @@ if TYPE_CHECKING:
     from coworker.core.tool_scope import ToolScope
     from coworker.memory.long_term import LongTermMemory
     from coworker.memory.short_term import ShortTermMemory
+    from coworker.tools.communicate_tool import CommunicateTool
     from coworker.tools.reasoning_tools import TaskStore
     from coworker.tools.registry import ToolRegistry
 
@@ -34,7 +41,6 @@ _BUBBLE_BASE_INTERCEPTS: dict[str, str] = {
     "restart_self": "该工具会重启父线程，泡泡内不可用。请专注自身目标。",
     "clear_short_term_memory": "该工具会压缩父线程短期记忆，泡泡内不可用。",
     "compress_memory": "该工具会压缩父线程记忆，泡泡内不可用。",
-    "communicate": "该工具在泡泡内不可用",
 }
 
 
@@ -55,6 +61,7 @@ class BubbleMiniLoop:
         usage_logs_root: str | Path | None = None,
         task_store: TaskStore | None = None,
         long_term: LongTermMemory | None = None,
+        communicate: CommunicateTool | None = None,
     ) -> None:
         self._bubble = bubble
         self._brain = brain
@@ -67,6 +74,7 @@ class BubbleMiniLoop:
         self._usage_stats = usage_stats
         self._usage_logs_root = Path(usage_logs_root) if usage_logs_root is not None else Path(logs_dir)
         self._long_term = long_term
+        self._handoff_notifier = BubbleHandoffNotifier(communicate)
         # 默认 None：泡泡用一次性内存 TaskStore，任务不外泄到主线。
         # 注入真实 task_store 时（如潜意识 introspect），泡泡内 task_create 直写主线持久任务。
         self._task_store_override = task_store
@@ -84,6 +92,10 @@ class BubbleMiniLoop:
     async def run(self) -> None:
         bubble = self._bubble
         try:
+            await self._handoff_notifier.announce_started(
+                bubble,
+                resumed=bubble.resume_count > 0,
+            )
             await self._run_inner()
         except asyncio.CancelledError:
             bubble.status = "cancelled"
@@ -110,13 +122,40 @@ class BubbleMiniLoop:
 
     def _tool_intercepts(self) -> dict[str, str]:
         """Tools to intercept in this loop: {name: reason}. Override to extend."""
-        return dict(_BUBBLE_BASE_INTERCEPTS)
+        intercepts = dict(_BUBBLE_BASE_INTERCEPTS)
+        if not self._bubble.participant_id:
+            intercepts["communicate"] = (
+                "该泡泡未绑定通信对象，不能直接对外通信。"
+                "如需父线程协助，请调用 bubble_send(target='main', message=...)。"
+            )
+        return intercepts
 
     def _log_filename(self, bubble: Bubble) -> str:
         """泡泡日志文件名。子类可覆写以在文件名中体现类型（如潜意识模式）。"""
         return f"{bubble.id}.jsonl"
 
     def _build_identity_content(self, bubble: Bubble) -> str:
+        if bubble.participant_id:
+            conversation = (
+                f"，会话为 {bubble.conversation_id}"
+                if bubble.conversation_id
+                else ""
+            )
+            external_communication = (
+                f"- 此泡泡已绑定通信对象 {bubble.participant_id}{conversation}。"
+                "该对象的新消息会直接转交给你；"
+                "需要回复时可调用 communicate(message=...)，系统会固定投递给该对象。"
+                "不得借此联系其他对象。\n"
+            )
+            if bubble.handoff_transparency:
+                external_communication += (
+                    "- 系统会自动标识你的直接回复，并在 Bubble 开始和结束时通知对方。\n"
+                )
+        else:
+            external_communication = (
+                "- 此泡泡未绑定外部通信对象，不能直接通过通信信道联系用户；"
+                "如需通知，通过 bubble_send(target='main') 转交父线程。\n"
+            )
         return (
             f"[泡泡模式]\n"
             f"你现在正处在一个独立的并行思考线程（泡泡）中，泡泡 id 为 {bubble.id}，目标：{bubble.goal}。\n"
@@ -135,7 +174,7 @@ class BubbleMiniLoop:
             f"  用 bubble_done(result='...') 提交最终结论并结束。\n"
             f"\n"
             f"【注意事项】\n"
-            f"- 不要通过企业微信等外部渠道直接联系用户；如需通知，通过 bubble_send(target='main') 转交父线程。\n"
+            f"{external_communication}"
             f"- task_create/execute_code 等工具使用独立作业存储，不影响父线程，但文件系统共享，"
             f"执行代码时建议通过 cwd 参数指定独立工作目录；若需要等待代码结果再继续，"
             f"可对 execute_code 传 block=true，通常比反复 get_code_result 更省轮次。\n"
@@ -225,6 +264,18 @@ class BubbleMiniLoop:
             allow_block=True,
             brain=bubble.brain,
             short_term=self._stm,
+            communicate_participant_id=bubble.participant_id,
+            communicate_conversation_id=bubble.conversation_id,
+            communicate_message_prefix=(
+                bubble_reply_fallback_prefix(bubble.participant_id)
+                if bubble.handoff_transparency
+                else ""
+            ),
+            communicate_message_extra=(
+                bubble_reply_message_extra(bubble.id)
+                if bubble.handoff_transparency
+                else {}
+            ),
         )
         scoped_tools = self._tools.scoped(self._scope)
         intercepts = self._tool_intercepts()
@@ -307,11 +358,31 @@ class BubbleMiniLoop:
         bubble = self._bubble
         while not bubble.inbox.empty():
             try:
-                sender_id, message_text = bubble.inbox.get_nowait()
-                content = f"[来自 {sender_id}] {message_text}"
-                self._short_term.primary.append(Message(role="user", content=content))
-                if self._ilog:
-                    self._ilog.log_message_in(participant_id=sender_id, content=message_text, source="bubble")
+                item = bubble.inbox.get_nowait()
+                if isinstance(item, IncomingEvent):
+                    self._short_term.primary.append(Message(
+                        role="user",
+                        content=build_content_blocks([item]),
+                        source=item.source,
+                    ))
+                    if self._ilog:
+                        self._ilog.log_message_in(
+                            participant_id=item.participant_id,
+                            content=item.content,
+                            source=item.source,
+                            attachments=item.attachments or None,
+                            conversation_id=item.conversation_id,
+                        )
+                else:
+                    sender_id, message_text = item
+                    content = f"[来自 {sender_id}] {message_text}"
+                    self._short_term.primary.append(Message(role="user", content=content))
+                    if self._ilog:
+                        self._ilog.log_message_in(
+                            participant_id=sender_id,
+                            content=message_text,
+                            source="bubble",
+                        )
             except asyncio.QueueEmpty:
                 break
 
@@ -458,6 +529,8 @@ class BubbleMiniLoop:
                 "elapsed_seconds": bubble.elapsed_seconds(),
                 "error": bubble.error,
                 "participant_id": bubble.participant_id,
+                "conversation_id": bubble.conversation_id,
+                "handoff_transparency": bubble.handoff_transparency,
                 "palaces": bubble.palaces,
                 "palace_tags": bubble.palace_tags,
                 "resume_count": bubble.resume_count,
@@ -499,6 +572,7 @@ class BubbleMiniLoop:
 
         bubble = self._bubble
         await self._write_back_to_palaces()
+        await self._handoff_notifier.announce_finished(bubble)
         merge_msg = _build_merge_message(bubble)
         if bubble.status == "timeout" and self._store.timeout_resume_seconds > 0:
             merge_msg += (
@@ -515,6 +589,17 @@ class BubbleMiniLoop:
             content=merge_msg,
             source="bubble",
         ))
+        # A participant can send a follow-up while the bubble is in its final
+        # model/tool cycle.  The bubble is terminal by this point, so return
+        # any such undrained external message to the main inbox instead of
+        # silently losing it.
+        while not bubble.inbox.empty():
+            try:
+                item = bubble.inbox.get_nowait()
+            except asyncio.QueueEmpty:
+                break
+            if isinstance(item, IncomingEvent):
+                await self._inbox_watcher.push(item)
         self._store.mark_done(bubble)
 
 def _build_merge_message(bubble: Bubble) -> str:
@@ -530,6 +615,10 @@ def _build_merge_message(bubble: Bubble) -> str:
         f"执行 {bubble.cycles_used} 轮 | 耗时 {bubble.elapsed_seconds():.1f}s",
         f"目标：{bubble.goal}",
     ]
+    if bubble.participant_id:
+        lines.append(f"通信对象：{bubble.participant_id}")
+    if bubble.conversation_id:
+        lines.append(f"通信会话：{bubble.conversation_id}")
     if bubble.checkpoint_count > 0:
         lines.append(f"检查点次数：{bubble.checkpoint_count}")
     if bubble.resume_count > 0:

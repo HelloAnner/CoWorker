@@ -1,4 +1,4 @@
-import { Bot, CheckCircle2, ChevronUp, FileDiff, Info, Lightbulb, ListChecks, MessageSquare, Terminal, Users, XCircle } from "lucide-react";
+import { Bot, CheckCircle2, ChevronUp, FileDiff, Info, Lightbulb, ListChecks, MessageSquare, Sparkles, Terminal, Users, XCircle } from "lucide-react";
 import { isValidElement, useState, type JSX } from "react";
 import ReactMarkdown, { type Components } from "react-markdown";
 import rehypeKatex from "rehype-katex";
@@ -102,6 +102,9 @@ export function ToolResultDisclosure({ result }: { result: TimelineMessage }) {
 
 export function MessageIcon({ message }: { message: TimelineMessage }) {
   switch (message.kind) {
+    case "bubble_handoff":
+    case "bubble_reply":
+      return <Sparkles size={16} />;
     case "reasoning":
       return <Lightbulb size={16} />;
     case "tool_call":

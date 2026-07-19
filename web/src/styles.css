@@ -2042,6 +2042,38 @@ h1, h2, h3, p { margin: 0; }
   border-color: color-mix(in oklch, var(--lime) 70%, var(--fg));
 }
 .msg.ai { border-bottom-left-radius: 6px; background: var(--bg); }
+.msg.ai.bubble-reply {
+  display: grid;
+  gap: 7px;
+  border-color: color-mix(in oklch, var(--tool-bubble) 34%, var(--border));
+  border-left: 3px solid color-mix(in oklch, var(--tool-bubble) 72%, var(--border));
+  background: color-mix(in oklch, var(--tool-bubble) 6%, var(--bg));
+}
+.bubble-reply-label {
+  display: flex; align-items: center; gap: 6px;
+  color: color-mix(in oklch, var(--tool-bubble) 72%, var(--fg));
+  font: 650 10px/1.2 var(--font-meta);
+  letter-spacing: .02em;
+}
+.bubble-reply-label code,
+.msg.bubble-handoff code {
+  overflow: hidden; max-width: 180px; padding: 2px 5px;
+  border-radius: 5px; background: color-mix(in oklch, var(--tool-bubble) 10%, transparent);
+  color: inherit; font: 10px/1.2 var(--font-mono); text-overflow: ellipsis; white-space: nowrap;
+}
+.msg.bubble-handoff {
+  align-self: stretch; display: flex; align-items: center; gap: 8px;
+  max-width: 100%; padding: 2px 0; border: 0; border-radius: 0;
+  color: color-mix(in oklch, var(--tool-bubble) 68%, var(--fg));
+  background: transparent; font: 600 10.5px/1.4 var(--font-meta); animation: none;
+}
+.msg.bubble-handoff::before,
+.msg.bubble-handoff::after {
+  content: ''; height: 1px; flex: 1 1 20px;
+  background: color-mix(in oklch, var(--tool-bubble) 25%, var(--border));
+}
+.bubble-handoff-mark { font-size: 13px; line-height: 1; }
+.msg.bubble-handoff.phase-end { color: var(--muted); }
 .msg.system {
   max-width: 100%; text-align: center; border: 0; font-size: 12px;
   color: var(--muted); background: transparent;
@@ -2062,6 +2094,14 @@ h1, h2, h3, p { margin: 0; }
   padding: 10px 24px; border-top: 1px solid var(--border);
   display: flex; justify-content: space-between; align-items: center; gap: 12px;
   color: var(--muted); font-family: var(--font-meta); font-size: 11px;
+}
+.chat-tool-statuses { display: inline-flex; align-items: center; gap: 8px; min-width: 0; }
+.chat-bubble-live {
+  display: inline-flex; align-items: center; gap: 4px; min-width: 0; max-width: 220px;
+  padding: 3px 7px; border: 1px solid color-mix(in oklch, var(--tool-bubble) 34%, var(--border));
+  border-radius: 999px; color: color-mix(in oklch, var(--tool-bubble) 70%, var(--fg));
+  background: color-mix(in oklch, var(--tool-bubble) 7%, transparent);
+  font: 600 9.5px/1.2 var(--font-mono); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .tool-live { color: var(--coral); display: inline-flex; align-items: center; gap: 6px; }
 .chat-session-note { min-width: 0; overflow: hidden; text-align: right; text-overflow: ellipsis; white-space: nowrap; }

@@ -9,9 +9,10 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from coworker.agent.bubble import Bubble, BubbleStore
+from coworker.agent.bubble_handoff import BubbleHandoffMatcher
 from coworker.agent.bubble_loop import BubbleMiniLoop, _build_merge_message
 from coworker.agent.usage_stats import UsageStatsCollector
-from coworker.core.types import LLMResponse, Message, ToolCall
+from coworker.core.types import AttachmentData, IncomingEvent, LLMResponse, Message, ToolCall
 from coworker.tools.bubble_tools import (
     BubbleCancelTool,
     BubbleCheckTool,
@@ -249,6 +250,63 @@ class TestBubble:
         b = Bubble(id="bbl_x", goal="g")
         b.finished_at = b.created_at + timedelta(seconds=5)
         assert abs(b.elapsed_seconds() - 5.0) < 0.01
+
+
+class TestBubbleHandoff:
+    def test_unconfigured_matcher_fails_closed_but_config_factory_uses_defaults(self):
+        unconfigured = BubbleHandoffMatcher()
+        configured = BubbleHandoffMatcher.from_config()
+        local = "coworker-desktop:desk:local:cw_default:abcd1234"
+
+        assert not unconfigured.matches("wecom:alice")
+        assert not unconfigured.matches(local)
+        assert not unconfigured.matches("web-client", stream_transport="websocket")
+        assert configured.matches("wecom:alice")
+        assert configured.matches(local)
+        assert configured.matches("web-client", stream_transport="websocket")
+        assert configured.matches("sse-client", stream_transport="sse")
+
+    def test_matcher_combines_glob_stream_and_desktop_rules(self):
+        matcher = BubbleHandoffMatcher.from_config(
+            participant_matches=["wecom:*", "coworker-desktop:*:local:*"],
+            stream_transports=["websocket", "sse"],
+        )
+
+        local = "coworker-desktop:desk:local:cw_default:abcd1234"
+        claude = "coworker-desktop:desk:claude:cw_default:abcd1234"
+        codex = "coworker-desktop:desk:codex:cw_default:abcd1234"
+
+        assert matcher.matches("wecom:alice")
+        assert not matcher.matches("other-wecom:alice")
+        assert matcher.matches("web-client", stream_transport="websocket")
+        assert matcher.matches("sse-client", stream_transport="sse")
+        assert not matcher.matches("web-client")
+        assert matcher.matches(local, stream_transport="websocket")
+        assert not matcher.matches(claude, stream_transport="websocket")
+        assert not matcher.matches(codex, stream_transport="sse")
+
+    def test_matcher_uses_exact_match_without_glob_and_allows_empty_override(self):
+        exact = BubbleHandoffMatcher.from_config(participant_matches=["wecom:alice"])
+        disabled = BubbleHandoffMatcher.from_config(participant_matches=[])
+        streams_disabled = BubbleHandoffMatcher.from_config(stream_transports=[])
+
+        assert exact.matches("wecom:alice")
+        assert not exact.matches("wecom:bob")
+        assert not disabled.matches("wecom:alice")
+        assert not disabled.matches("coworker-desktop:desk:local:cw_default:abcd1234")
+        assert not streams_disabled.matches("web-client", stream_transport="websocket")
+
+    def test_explicit_desktop_glob_takes_precedence_over_stream_guard(self):
+        matcher = BubbleHandoffMatcher.from_config(
+            participant_matches=["coworker-desktop:*:claude:*"],
+            stream_transports=["websocket"],
+        )
+
+        assert matcher.matches("coworker-desktop:desk:claude:cw_default:abcd1234")
+        assert not matcher.matches(
+            "coworker-desktop:desk:codex:cw_default:abcd1234",
+            stream_transport="websocket",
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -595,6 +653,187 @@ class TestBubbleMiniLoop:
         assert "communicate" in ic
         assert "bubble_spawn" not in ic
 
+    def test_participant_bound_bubble_can_use_communicate(
+        self, store, mock_brain, mock_inbox, mock_registry, tmp_path
+    ):
+        b = store.create("reply to user", [Message(role="user", content="x")], max_cycles=5)
+        assert isinstance(b, Bubble)
+        b.participant_id = "wecom:alice"
+        b.conversation_id = "conv-1"
+        loop = _make_mini_loop(b, mock_brain, mock_registry, mock_inbox, store, tmp_path)
+
+        assert "communicate" not in loop._tool_intercepts()
+        identity = loop._build_identity_content(b)
+        assert "wecom:alice" in identity
+        assert "communicate(message=...)" in identity
+
+    async def test_participant_bound_bubble_sends_direct_reply_only_to_its_binding(
+        self, store, messages, mock_brain, mock_inbox, tmp_path
+    ):
+        from coworker.core.types import CommunicateRequest, ToolResult
+        from coworker.tools.communicate_tool import CommunicateTool
+        from coworker.tools.registry import ToolRegistry
+
+        sent: list[CommunicateRequest] = []
+
+        async def sender(request: CommunicateRequest):
+            sent.append(request)
+            return ToolResult(tool_call_id="", content="sent")
+
+        registry = ToolRegistry()
+        communicate = CommunicateTool(str(tmp_path / "outbox"))
+        communicate.register_sender("wecom:", sender)
+        registry.register(communicate)
+        mock_brain.think = AsyncMock(
+            side_effect=[
+                _make_response(
+                    tool_calls=[
+                        ToolCall(
+                            id="reply",
+                            name="communicate",
+                            arguments={"message": "已经处理"},
+                        )
+                    ],
+                    stop_reason="tool_use",
+                ),
+                _make_response(
+                    tool_calls=[
+                        ToolCall(
+                            id="done",
+                            name="bubble_done",
+                            arguments={"result": "已回复用户"},
+                        )
+                    ],
+                    stop_reason="tool_use",
+                ),
+            ]
+        )
+        b = store.create("reply", messages, max_cycles=5)
+        assert isinstance(b, Bubble)
+        b.participant_id = "wecom:alice"
+        b.conversation_id = "conv-1"
+
+        loop = _make_mini_loop(b, mock_brain, registry, mock_inbox, store, tmp_path)
+        await loop.run()
+
+        assert sent == [
+            CommunicateRequest(
+                participant_id="wecom:alice",
+                message="已经处理",
+                conversation_id="conv-1",
+            )
+        ]
+
+    @pytest.mark.parametrize(
+        "participant_id",
+        ["wecom:alice", "coworker-desktop:desk:local:cw_default:abcd1234"],
+    )
+    @pytest.mark.parametrize(("resume_count", "resumed"), [(0, False), (1, True)])
+    async def test_transparent_bound_bubble_announces_handoff_before_reply_and_completion(
+        self,
+        store,
+        messages,
+        mock_brain,
+        mock_inbox,
+        tmp_path,
+        participant_id,
+        resume_count,
+        resumed,
+    ):
+        from coworker.agent.bubble_handoff import (
+            BUBBLE_REPLY_PREFIX,
+            bubble_handoff_message_extra,
+            bubble_reply_message_extra,
+            format_handoff_end_message,
+            format_handoff_start_message,
+        )
+        from coworker.core.types import CommunicateRequest, ToolResult
+        from coworker.tools.communicate_tool import CommunicateTool
+        from coworker.tools.registry import ToolRegistry
+
+        sent: list[CommunicateRequest] = []
+
+        async def sender(request: CommunicateRequest):
+            sent.append(request)
+            return ToolResult(tool_call_id="", content="sent")
+
+        registry = ToolRegistry()
+        communicate = CommunicateTool(str(tmp_path / "outbox"))
+        communicate.register_sender(f"{participant_id.split(':', 1)[0]}:", sender)
+        registry.register(communicate)
+        mock_brain.think = AsyncMock(
+            side_effect=[
+                _make_response(
+                    tool_calls=[
+                        ToolCall(
+                            id="reply",
+                            name="communicate",
+                            arguments={"message": "已经处理"},
+                        )
+                    ],
+                    stop_reason="tool_use",
+                ),
+                _make_response(
+                    tool_calls=[
+                        ToolCall(
+                            id="done",
+                            name="bubble_done",
+                            arguments={"result": "已回复用户"},
+                        )
+                    ],
+                    stop_reason="tool_use",
+                ),
+            ]
+        )
+        bubble = store.create("reply", messages, max_cycles=5)
+        assert isinstance(bubble, Bubble)
+        bubble.participant_id = participant_id
+        bubble.conversation_id = "conv-1"
+        bubble.handoff_transparency = True
+        bubble.resume_count = resume_count
+
+        loop = BubbleMiniLoop(
+            bubble=bubble,
+            brain=mock_brain,
+            tool_registry=registry,
+            system_prompt="sys",
+            bubble_store=store,
+            inbox_watcher=mock_inbox,
+            logs_dir=str(tmp_path),
+            communicate=communicate,
+        )
+        await loop.run()
+
+        expected_reply = (
+            "已经处理"
+            if participant_id.startswith("coworker-desktop:")
+            else f"{BUBBLE_REPLY_PREFIX}已经处理"
+        )
+        assert sent == [
+            CommunicateRequest(
+                participant_id=participant_id,
+                message=format_handoff_start_message(bubble.id, resumed=resumed),
+                conversation_id="conv-1",
+                extra=bubble_handoff_message_extra(
+                    bubble.id,
+                    phase="start",
+                    resumed=resumed,
+                ),
+            ),
+            CommunicateRequest(
+                participant_id=participant_id,
+                message=expected_reply,
+                conversation_id="conv-1",
+                extra=bubble_reply_message_extra(bubble.id),
+            ),
+            CommunicateRequest(
+                participant_id=participant_id,
+                message=format_handoff_end_message(bubble.id),
+                conversation_id="conv-1",
+                extra=bubble_handoff_message_extra(bubble.id, phase="end"),
+            ),
+        ]
+
     async def test_cancellation(self, store, messages, mock_brain, mock_inbox, mock_registry, tmp_path):
         async def slow_think(*args, **kwargs):
             await asyncio.sleep(10)
@@ -628,6 +867,69 @@ class TestBubbleMiniLoop:
 
         texts = [m.content for m in injected_messages if isinstance(m.content, str)]
         assert any("来自 主线" in t and "请关注点A" in t for t in texts)
+
+    async def test_directly_routed_communication_is_injected_with_metadata(
+        self, store, messages, mock_brain, mock_inbox, mock_registry, tmp_path
+    ):
+        injected_messages = []
+
+        async def capture_think(messages, system_prompt, tools):
+            injected_messages.extend(messages)
+            return _make_response(content="done")
+
+        mock_brain.think = capture_think
+        b = store.create("handle follow-up", messages, max_cycles=5)
+        assert isinstance(b, Bubble)
+        await b.inbox.put(
+            IncomingEvent(
+                participant_id="wecom:alice",
+                conversation_id="conv-7",
+                content="请看附件",
+                source="wecom",
+                attachments=[
+                    AttachmentData(
+                        filename="photo.jpg",
+                        media_type="image/jpeg",
+                        saved_path="data/attachments/photo.jpg",
+                        data="base64-image",
+                    )
+                ],
+            )
+        )
+
+        loop = _make_mini_loop(b, mock_brain, mock_registry, mock_inbox, store, tmp_path)
+        await loop.run()
+
+        direct_message = next(
+            message
+            for message in injected_messages
+            if isinstance(message.content, list)
+            and any(block.get("type") == "image" for block in message.content)
+        )
+        text_block = next(block for block in direct_message.content if block["type"] == "text")
+        assert "wecom:alice" in text_block["text"]
+        assert "conversation:conv-7" in text_block["text"]
+
+    async def test_finalizing_bubble_returns_undrained_direct_message_to_main(
+        self, store, messages, mock_brain, mock_inbox, mock_registry, tmp_path
+    ):
+        b = store.create("finish", messages, max_cycles=5)
+        assert isinstance(b, Bubble)
+        b.status = "done"
+        direct_event = IncomingEvent(
+            participant_id="alice",
+            content="一个稍晚到达的追问",
+            source="websocket",
+        )
+        await b.inbox.put(direct_event)
+        loop = _make_mini_loop(b, mock_brain, mock_registry, mock_inbox, store, tmp_path)
+
+        await loop._auto_merge()
+
+        pushed = [call.args[0] for call in mock_inbox.push.call_args_list]
+        assert pushed[0].source == "bubble"
+        assert pushed[1] is direct_event
+        assert store.get(b.id) is b
 
     async def test_bubble_send_to_main(self, store, messages, mock_brain, mock_inbox, mock_registry, tmp_path):
         tc = ToolCall(id="c1", name="bubble_send", arguments={"target": "main", "message": "发现了X"})
@@ -780,7 +1082,17 @@ class TestBubbleMiniLoop:
 
 
 class TestBubbleSpawnTool:
-    def _make_tool(self, store, short_term, brain, registry, prompt_builder, inbox, tmp_path):
+    def _make_tool(
+        self,
+        store,
+        short_term,
+        brain,
+        registry,
+        prompt_builder,
+        inbox,
+        tmp_path,
+        **kwargs,
+    ):
         return BubbleSpawnTool(
             store=store,
             short_term=short_term,
@@ -789,6 +1101,7 @@ class TestBubbleSpawnTool:
             system_prompt_builder=prompt_builder,
             inbox=inbox,
             logs_dir=str(tmp_path),
+            **kwargs,
         )
 
     async def test_spawn_creates_task(
@@ -801,6 +1114,202 @@ class TestBubbleSpawnTool:
         assert not result.is_error
         assert "bbl_" in result.content
         assert len(store.list_active()) == 1
+
+    async def test_spawn_binds_participant_and_conversation(
+        self,
+        store,
+        mock_short_term,
+        mock_brain,
+        mock_registry,
+        mock_prompt_builder,
+        mock_inbox,
+        tmp_path,
+    ):
+        mock_brain.think = AsyncMock(return_value=_make_response(content="done"))
+        tool = self._make_tool(
+            store,
+            mock_short_term,
+            mock_brain,
+            mock_registry,
+            mock_prompt_builder,
+            mock_inbox,
+            tmp_path,
+        )
+
+        await tool.execute(
+            goal="处理这个会话",
+            participant_id="wecom:alice",
+            conversation_id="conv-3",
+        )
+
+        bubble = store.list_active()[0]
+        assert bubble.participant_id == "wecom:alice"
+        assert bubble.conversation_id == "conv-3"
+        assert not bubble.handoff_transparency
+
+    async def test_transparent_binding_defers_handoff_notice_to_bubble_loop(
+        self,
+        store,
+        mock_short_term,
+        mock_brain,
+        mock_registry,
+        mock_prompt_builder,
+        mock_inbox,
+        tmp_path,
+    ):
+        from coworker.core.types import CommunicateRequest, ToolResult
+        from coworker.tools.communicate_tool import CommunicateTool
+
+        sent: list[CommunicateRequest] = []
+        order: list[str] = []
+
+        async def sender(request: CommunicateRequest):
+            sent.append(request)
+            order.append("notice")
+            return ToolResult(tool_call_id="", content="sent")
+
+        communicate = CommunicateTool(str(tmp_path / "outbox"))
+        communicate.register_sender("wecom:", sender)
+        tool = self._make_tool(
+            store,
+            mock_short_term,
+            mock_brain,
+            mock_registry,
+            mock_prompt_builder,
+            mock_inbox,
+            tmp_path,
+            communicate=communicate,
+            handoff_matcher=BubbleHandoffMatcher.from_config(participant_matches=["wecom:*"]),
+        )
+
+        with patch.object(tool, "start_existing") as start_existing:
+            start_existing.side_effect = lambda _bubble: order.append("start")
+            result = await tool.execute(
+                goal="处理这个会话",
+                participant_id="wecom:alice",
+                conversation_id="conv-3",
+            )
+
+        assert not result.is_error
+        bubble = store.list_active()[0]
+        assert bubble.handoff_transparency
+        assert order == ["start"]
+        assert not sent
+
+    @pytest.mark.parametrize("transport", ["websocket", "sse"])
+    async def test_configured_stream_transport_enables_transparent_handoff(
+        self,
+        transport,
+        store,
+        mock_short_term,
+        mock_brain,
+        mock_registry,
+        mock_prompt_builder,
+        mock_inbox,
+        tmp_path,
+    ):
+        from coworker.core.types import CommunicateRequest
+        from coworker.tools.communicate_tool import CommunicateTool
+
+        participant_id = f"{transport}-client"
+        outbound: asyncio.Queue[CommunicateRequest] = asyncio.Queue()
+        communicate = CommunicateTool(str(tmp_path / "outbox"))
+        assert communicate.register_ws(participant_id, outbound, transport=transport)
+        tool = self._make_tool(
+            store,
+            mock_short_term,
+            mock_brain,
+            mock_registry,
+            mock_prompt_builder,
+            mock_inbox,
+            tmp_path,
+            communicate=communicate,
+            handoff_matcher=BubbleHandoffMatcher.from_config(stream_transports=[transport]),
+        )
+
+        with patch.object(tool, "start_existing"):
+            result = await tool.execute(goal="处理流式会话", participant_id=participant_id)
+
+        assert not result.is_error
+        bubble = store.list_active()[0]
+        assert bubble.handoff_transparency
+        assert outbound.empty()
+
+    async def test_unconfigured_stream_transport_keeps_handoff_silent(
+        self,
+        store,
+        mock_short_term,
+        mock_brain,
+        mock_registry,
+        mock_prompt_builder,
+        mock_inbox,
+        tmp_path,
+    ):
+        from coworker.tools.communicate_tool import CommunicateTool
+
+        outbound: asyncio.Queue = asyncio.Queue()
+        communicate = CommunicateTool(str(tmp_path / "outbox"))
+        assert communicate.register_ws("web-client", outbound, transport="websocket")
+        tool = self._make_tool(
+            store,
+            mock_short_term,
+            mock_brain,
+            mock_registry,
+            mock_prompt_builder,
+            mock_inbox,
+            tmp_path,
+            communicate=communicate,
+            handoff_matcher=BubbleHandoffMatcher.from_config(stream_transports=["sse"]),
+        )
+
+        with patch.object(tool, "start_existing"):
+            await tool.execute(goal="处理流式会话", participant_id="web-client")
+
+        bubble = store.list_active()[0]
+        assert not bubble.handoff_transparency
+        assert outbound.empty()
+
+    @pytest.mark.parametrize(
+        ("actor_id", "transparent"),
+        [("local", True), ("claude", False), ("codex", False)],
+    )
+    async def test_local_desktop_rule_excludes_claude_and_codex_from_stream_rule(
+        self,
+        actor_id,
+        transparent,
+        store,
+        mock_short_term,
+        mock_brain,
+        mock_registry,
+        mock_prompt_builder,
+        mock_inbox,
+        tmp_path,
+    ):
+        from coworker.core.types import CommunicateRequest
+        from coworker.tools.communicate_tool import CommunicateTool
+
+        participant_id = f"coworker-desktop:desk:{actor_id}:cw_default:abcd1234"
+        outbound: asyncio.Queue[CommunicateRequest] = asyncio.Queue()
+        communicate = CommunicateTool(str(tmp_path / "outbox"))
+        assert communicate.register_ws(participant_id, outbound, transport="websocket")
+        tool = self._make_tool(
+            store,
+            mock_short_term,
+            mock_brain,
+            mock_registry,
+            mock_prompt_builder,
+            mock_inbox,
+            tmp_path,
+            communicate=communicate,
+            handoff_matcher=BubbleHandoffMatcher.from_config(stream_transports=["websocket"]),
+        )
+
+        with patch.object(tool, "start_existing"):
+            await tool.execute(goal="处理 Desktop 会话", participant_id=participant_id)
+
+        bubble = store.list_active()[0]
+        assert bubble.handoff_transparency is transparent
+        assert outbound.empty()
 
     async def test_spawn_at_capacity_returns_error(
         self, mock_short_term, mock_brain, mock_registry, mock_prompt_builder, mock_inbox, tmp_path
@@ -851,6 +1360,58 @@ class TestBubbleSpawnTool:
         assert sender == "主线"
         assert message == "请完成剩余验证。"
 
+    async def test_transparent_resume_defers_handoff_notice_to_bubble_loop(
+        self,
+        store,
+        messages,
+        mock_short_term,
+        mock_brain,
+        mock_registry,
+        mock_prompt_builder,
+        mock_inbox,
+        tmp_path,
+    ):
+        from coworker.core.types import CommunicateRequest, ToolResult
+        from coworker.tools.communicate_tool import CommunicateTool
+
+        bubble = store.create("继续处理", messages, max_cycles=2)
+        assert isinstance(bubble, Bubble)
+        bubble.participant_id = "wecom:alice"
+        bubble.conversation_id = "conv-3"
+        bubble.handoff_transparency = True
+        bubble.status = "timeout"
+        bubble.cycles_used = 2
+        store.mark_done(bubble)
+
+        sent: list[CommunicateRequest] = []
+        order: list[str] = []
+
+        async def sender(request: CommunicateRequest):
+            sent.append(request)
+            order.append("notice")
+            return ToolResult(tool_call_id="", content="sent")
+
+        communicate = CommunicateTool(str(tmp_path / "outbox"))
+        communicate.register_sender("wecom:", sender)
+        tool = self._make_tool(
+            store,
+            mock_short_term,
+            mock_brain,
+            mock_registry,
+            mock_prompt_builder,
+            mock_inbox,
+            tmp_path,
+            communicate=communicate,
+        )
+
+        with patch.object(tool, "start_existing") as start_existing:
+            start_existing.side_effect = lambda _bubble: order.append("start")
+            result = await tool.execute(bubble_id=bubble.id, max_cycles=3)
+
+        assert not result.is_error
+        assert order == ["start"]
+        assert not sent
+
     async def test_resume_rejects_non_timeout_bubble(
         self, store, messages, mock_short_term, mock_brain, mock_registry, mock_prompt_builder, mock_inbox, tmp_path
     ):
@@ -889,6 +1450,7 @@ class TestBubbleSpawnTool:
         assert definition.name == "bubble_spawn"
         assert definition.parameters["required"] == []
         assert "bubble_id" in definition.parameters["properties"]
+        assert "conversation_id" in definition.parameters["properties"]
         assert "message" not in definition.parameters["properties"]
 
     async def test_spawn_thinking_default_is_true(
@@ -1573,6 +2135,58 @@ class TestWriteFileToolLock:
 
 
 class TestToolForkBubbleScope:
+    async def test_communicate_fork_limits_bubble_to_bound_recipient(self, tmp_path):
+        from coworker.core.tool_scope import ToolScope
+        from coworker.core.types import CommunicateRequest, ToolResult
+        from coworker.tools.code_tools import BackgroundJobStore
+        from coworker.tools.communicate_tool import CommunicateTool
+        from coworker.tools.reasoning_tools import TaskStore
+
+        seen: list[CommunicateRequest] = []
+
+        async def sender(request: CommunicateRequest):
+            seen.append(request)
+            return ToolResult(tool_call_id="", content="sent")
+
+        tool = CommunicateTool(str(tmp_path / "outbox"))
+        tool.register_sender("wecom:", sender)
+        scope = ToolScope(
+            task_store=TaskStore(store_path=None),
+            job_store=BackgroundJobStore(),
+            inbox=None,
+            communicate_participant_id="wecom:alice",
+            communicate_conversation_id="conv-1",
+        )
+
+        forked = tool.fork(scope)
+        result = await forked.execute(message="已处理")
+        rejected = await forked.execute(participant_id="wecom:bob", message="不应发送")
+
+        assert not result.is_error
+        assert rejected.is_error
+        assert seen == [
+            CommunicateRequest(
+                participant_id="wecom:alice",
+                message="已处理",
+                conversation_id="conv-1",
+            )
+        ]
+
+    def test_communicate_fork_without_binding_keeps_main_tool(self, tmp_path):
+        from coworker.core.tool_scope import ToolScope
+        from coworker.tools.code_tools import BackgroundJobStore
+        from coworker.tools.communicate_tool import CommunicateTool
+        from coworker.tools.reasoning_tools import TaskStore
+
+        tool = CommunicateTool(str(tmp_path / "outbox"))
+        scope = ToolScope(
+            task_store=TaskStore(store_path=None),
+            job_store=BackgroundJobStore(),
+            inbox=None,
+        )
+
+        assert tool.fork(scope) is tool
+
     def test_sleep_fork_returns_no_inbox(self):
         from unittest.mock import MagicMock
 

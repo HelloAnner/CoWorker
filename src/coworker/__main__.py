@@ -14,6 +14,8 @@ import uvicorn
 from loguru import logger
 
 from coworker.agent.bubble import BubbleStore
+from coworker.agent.bubble_handoff import BubbleHandoffMatcher
+from coworker.agent.bubble_router import BubbleMessageRouter
 from coworker.agent.event_collector import RuntimeEventCollector
 from coworker.agent.inbox_watcher import InboxWatcher
 from coworker.agent.interaction_log import InteractionLogger
@@ -631,6 +633,11 @@ async def _main() -> bool:
             palace_loader=palace_loader,
             skill_loader=skill_loader,
             long_term=long_term,
+            communicate=communicate,
+            handoff_matcher=BubbleHandoffMatcher.from_config(
+                participant_matches=(config.agent.bubble_handoff_transparency_participant_matches),
+                stream_transports=(config.agent.bubble_handoff_transparency_stream_transports),
+            ),
         )
         registry.register(bubble_spawn)
         registry.register(BubbleCheckTool(bubble_store))
@@ -663,6 +670,12 @@ async def _main() -> bool:
             long_term=long_term,
             mode_loader=mode_loader,
         )
+
+    # Desktop envelopes are normalized by the first interceptor above.  The
+    # bubble router then gets the clean inbound event and may hand it directly
+    # to an explicitly participant-bound active bubble.
+    if bubble_store is not None:
+        inbox_watcher.add_interceptor(BubbleMessageRouter(bubble_store))
     registry.register(ClearShortTermMemoryTool(short_term, brain, subconscious))
 
     if is_restart:

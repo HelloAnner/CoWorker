@@ -1,7 +1,7 @@
 import { Bot, Laptop, TerminalSquare } from "lucide-react";
 import { useI18n } from "../i18n";
 import type { DictKey } from "../i18n/en";
-import type { TimelineAttachment, TimelineMessage } from "../lib/bridgeLogic";
+import type { BubbleTimelineMeta, TimelineAttachment, TimelineMessage } from "../lib/bridgeLogic";
 import type { ActorHealth, ActorMessage, DesktopActorId } from "../tauri";
 
 function toolValueText(value: unknown): string {
@@ -30,6 +30,29 @@ function fencedToolValue(value: unknown, language = "text"): string {
   return `${fence}${language}\n${text}\n${fence}`;
 }
 
+function readBubbleMetadata(value: unknown): BubbleTimelineMeta | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const bubble = value as Record<string, unknown>;
+  const id = typeof bubble.id === "string" ? bubble.id.trim() : "";
+  const kind = bubble.kind === "handoff" || bubble.kind === "reply" ? bubble.kind : null;
+  if (!id || !kind) return null;
+  const phase = bubble.phase === "start" || bubble.phase === "end" ? bubble.phase : null;
+  return { id, kind, phase, resumed: bubble.resumed === true };
+}
+
+function bubbleMessageText(
+  bubble: BubbleTimelineMeta,
+  content: string,
+  t: (key: DictKey, vars?: Record<string, string | number>) => string,
+): string {
+  if (bubble.kind === "reply") return content;
+  if (bubble.phase === "end") return t("actors.bubbleHandoffEnd", { id: bubble.id });
+  return t(
+    bubble.resumed ? "actors.bubbleHandoffResume" : "actors.bubbleHandoffStart",
+    { id: bubble.id },
+  );
+}
+
 export function isTimelineNearBottom(
   timeline: Pick<HTMLDivElement, "scrollHeight" | "scrollTop" | "clientHeight">,
   threshold = 72,
@@ -54,6 +77,7 @@ export function actorMessagesToTimelineMessages(
       ? t("actors.codex")
       : t("actors.claude");
   return messages.flatMap((message) => {
+    const bubble = readBubbleMetadata(message.metadata?.bubble);
     const metadataKind = String(message.metadata?.kind ?? "text");
     const toolName = typeof message.metadata?.tool_name === "string" ? message.metadata.tool_name : null;
     const toolItemId = typeof message.metadata?.tool_use_id === "string"
@@ -98,13 +122,21 @@ export function actorMessagesToTimelineMessages(
         is_error: isError,
       } satisfies TimelineMessage];
     }
-    const kind = message.author_kind === "tool" && metadataKind === "text" ? "tool_result" : metadataKind;
+    const kind = bubble?.kind === "handoff"
+      ? "bubble_handoff"
+      : bubble?.kind === "reply"
+        ? "bubble_reply"
+        : message.author_kind === "tool" && metadataKind === "text"
+          ? "tool_result"
+          : metadataKind;
     return [{
       id: message.id,
       timestamp: message.created_at,
-      author_kind: normalizeActorMessageAuthorKind(message.author_kind, actor),
+      author_kind: bubble ? "bubble" : normalizeActorMessageAuthorKind(message.author_kind, actor),
       author_id: typeof message.metadata?.author_id === "string" ? message.metadata.author_id : null,
-      author_label: typeof message.metadata?.author_label === "string"
+      author_label: bubble
+        ? t("actors.bubble")
+        : typeof message.metadata?.author_label === "string"
         ? message.metadata.author_label
         : message.author_kind === "local"
         ? t("actors.you")
@@ -116,7 +148,7 @@ export function actorMessagesToTimelineMessages(
               ? t("actors.reasoning")
               : actorLabel,
       kind,
-      text: message.content,
+      text: bubble ? bubbleMessageText(bubble, message.content, t) : message.content,
       attachments: Array.isArray(message.metadata?.attachments)
         ? message.metadata.attachments.flatMap((item): TimelineAttachment[] => {
             if (!item || typeof item !== "object") return [];
@@ -137,6 +169,7 @@ export function actorMessagesToTimelineMessages(
       streaming: message.metadata?.streaming === true,
       tool_name: toolName,
       is_error: message.metadata?.is_error === true,
+      bubble,
     }];
   });
 }

@@ -1014,7 +1014,26 @@ html:has(.admin-login),
 .bubble-record .record-main { min-width: 0; }
 .bubble-record-tags { display: flex; align-items: center; gap: 5px; }
 .bubble-mode { padding: 4px 7px; border-radius: 99px; color: var(--admin-vital); background: var(--admin-soft); font: 680 9px var(--admin-data); }
+.bubble-handoff-tag {
+  display: inline-flex; align-items: center; gap: 4px; padding: 4px 7px;
+  border: 1px solid color-mix(in oklch, var(--admin-vital) 26%, var(--admin-line));
+  border-radius: 99px; color: var(--admin-vital);
+  background: color-mix(in oklch, var(--admin-vital) 7%, var(--admin-surface));
+  font: 680 9px var(--admin-data);
+}
 .bubble-record-title { display: -webkit-box; overflow: hidden; margin: 7px 0 5px; font-size: 13px; line-height: 1.5; overflow-wrap: anywhere; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
+.bubble-record-routing {
+  display: flex; flex-wrap: wrap; gap: 5px; margin: 0 0 6px;
+}
+.bubble-record-routing > span {
+  display: inline-flex; align-items: center; gap: 4px; min-width: 0; max-width: min(100%, 320px);
+  padding: 3px 6px; border: 1px solid var(--admin-line); border-radius: 6px;
+  color: var(--admin-muted); background: color-mix(in oklch, var(--admin-paper) 58%, var(--admin-surface));
+  font: 600 9px/1.3 var(--admin-data);
+}
+.bubble-record-routing code {
+  overflow: hidden; color: var(--admin-ink); font: inherit; text-overflow: ellipsis; white-space: nowrap;
+}
 .bubble-record-meta { display: block; overflow: hidden; color: var(--admin-muted); font: 10px/1.5 var(--admin-data); text-overflow: ellipsis; white-space: nowrap; }
 .bubble-history { padding: 12px 15px 16px; background: color-mix(in oklch, var(--admin-paper) 48%, var(--admin-surface)); }
 .bubble-history .short-message-list { max-height: 640px; }

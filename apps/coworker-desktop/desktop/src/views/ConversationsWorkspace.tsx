@@ -8,6 +8,7 @@ import {
   mergeMessages,
   sessionListLimit,
   sessionMessagePageSize,
+  type BubbleTimelineMeta,
   type FeedbackTone,
   type InlineNotice,
   type TimelineAttachment,
@@ -604,6 +605,16 @@ function ConversationController({
     { value: "bypassPermissions", label: t("actors.modeBypassPermissions"), riskLabel: t("actors.modeBypassWarning") },
   ] : undefined;
   const messageGroups = useMemo(() => groupToolMessages(messages), [messages]);
+  const activeBubble = useMemo(() => {
+    let current: BubbleTimelineMeta | null = null;
+    for (const message of messages) {
+      const bubble = message.bubble;
+      if (!bubble || bubble.kind !== "handoff") continue;
+      if (bubble.phase === "start") current = bubble;
+      else if (bubble.phase === "end" && current?.id === bubble.id) current = null;
+    }
+    return current;
+  }, [messages]);
 
   if (!active) return null;
   return <SessionsView
@@ -634,6 +645,7 @@ function ConversationController({
     messagesLoading={messagesLoading}
     onLoadEarlierMessages={() => void loadEarlier().catch(feedback.error)}
     sessionMessageGroups={messageGroups}
+    activeBubble={activeBubble}
     onDownloadAttachment={(attachment) => void downloadAttachment(
       attachment,
       t("sessions.dialogSaveAttachment"),

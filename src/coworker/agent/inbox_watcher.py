@@ -63,10 +63,19 @@ class InboxWatcher:
         self._running = False
         self._message_event = asyncio.Event()
         self._stop_event = asyncio.Event()
-        self._interceptor: Callable[[IncomingEvent], bool] | None = None
+        self._interceptors: list[Callable[[IncomingEvent], bool]] = []
 
     def set_interceptor(self, interceptor: Callable[[IncomingEvent], bool] | None) -> None:
-        self._interceptor = interceptor
+        """Replace all inbound interceptors (backwards-compatible single-hook API)."""
+        self._interceptors = [interceptor] if interceptor is not None else []
+
+    def add_interceptor(self, interceptor: Callable[[IncomingEvent], bool]) -> None:
+        """Append an inbound interceptor.
+
+        Interceptors run in registration order; returning True consumes the
+        event and prevents later interceptors and the main inbox from seeing it.
+        """
+        self._interceptors.append(interceptor)
 
     @property
     def message_event(self) -> asyncio.Event:
@@ -83,8 +92,9 @@ class InboxWatcher:
     async def push(self, event: IncomingEvent) -> str:
         event_id = secrets.token_hex(8)
         event.event_id = event_id
-        if self._interceptor is not None and self._interceptor(event):
-            return event_id
+        for interceptor in self._interceptors:
+            if interceptor(event):
+                return event_id
         await self._queue.put(event)
         self._message_event.set()
         return event_id

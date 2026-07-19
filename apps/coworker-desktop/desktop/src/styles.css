@@ -1569,6 +1569,35 @@ p {
   min-width: 0;
 }
 
+.sessionHeader > .sessionStateStack {
+  align-items: flex-end;
+  display: flex;
+  flex: 0 0 auto;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.bubbleHandoffPill {
+  align-items: center;
+  background: color-mix(in oklch, var(--lavender) 24%, var(--surface-strong));
+  border: 1px solid color-mix(in oklch, var(--lavender) 58%, var(--border));
+  border-radius: 999px;
+  color: color-mix(in oklch, var(--lavender) 72%, var(--fg));
+  display: inline-flex;
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  gap: 5px;
+  max-width: 320px;
+  overflow: hidden;
+  padding: 5px 8px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.bubbleHandoffPill i {
+  font-style: normal;
+}
+
 .sessionTitleRow,
 .sessionTitleInput {
   min-width: 0;
@@ -1767,6 +1796,35 @@ p {
   background: #f7f9ff;
   border-radius: 12px 12px 12px 4px;
   padding: 10px 12px;
+}
+
+.from-bubble .messageAvatar {
+  background: color-mix(in oklch, var(--lavender) 22%, var(--surface-strong));
+  border-color: color-mix(in oklch, var(--lavender) 55%, var(--border));
+  color: color-mix(in oklch, var(--lavender) 76%, var(--fg));
+}
+
+.kind-bubble_reply .messageBody {
+  background: color-mix(in oklch, var(--lavender) 10%, var(--surface-strong));
+  border-left: 3px solid color-mix(in oklch, var(--lavender) 72%, var(--border));
+  border-radius: 12px 12px 12px 4px;
+  padding: 10px 12px;
+}
+
+.kind-bubble_handoff .messageBody {
+  background: color-mix(in oklch, var(--lavender) 7%, var(--surface-muted));
+  border: 1px dashed color-mix(in oklch, var(--lavender) 52%, var(--border));
+  border-radius: 10px;
+  padding: 8px 11px;
+}
+
+.bubbleMessageId {
+  background: color-mix(in oklch, var(--lavender) 18%, transparent);
+  border-radius: 5px;
+  color: color-mix(in oklch, var(--lavender) 72%, var(--fg));
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  padding: 2px 5px;
 }
 
 .kind-tool_call .messageBody,
@@ -4427,6 +4485,14 @@ textarea:hover:not(:disabled) {
   .composerBar {
     align-items: stretch;
     flex-direction: column;
+  }
+
+  .sessionHeader > .sessionStateStack {
+    align-items: flex-start;
+  }
+
+  .bubbleHandoffPill {
+    max-width: 100%;
   }
 
   .sessionMessage.from-local .messageBody {

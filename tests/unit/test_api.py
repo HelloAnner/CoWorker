@@ -282,11 +282,21 @@ class TestSSE:
                     participant_id="alice",
                     message="hi",
                     conversation_id="thr_1",
+                    extra={
+                        "bubble": {
+                            "id": "bbl_frontend",
+                            "kind": "handoff",
+                            "phase": "start",
+                            "resumed": False,
+                        }
+                    },
                 )
             )
             == (
                 'data: {"participant_id": "alice", "message": "hi", '
-                '"conversation_id": "thr_1"}\n\n'
+                '"conversation_id": "thr_1", "extra": {"bubble": '
+                '{"id": "bbl_frontend", "kind": "handoff", "phase": "start", '
+                '"resumed": false}}}\n\n'
             )
         )
 

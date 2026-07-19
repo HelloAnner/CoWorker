@@ -2,7 +2,7 @@ import json
 import os
 import secrets
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 from pydantic_settings import (
@@ -11,7 +11,11 @@ from pydantic_settings import (
     SettingsConfigDict,
 )
 
-from coworker.core.constants import DEFAULT_LLM_MAX_TOKENS
+from coworker.core.constants import (
+    DEFAULT_BUBBLE_HANDOFF_TRANSPARENCY_PARTICIPANT_MATCHES,
+    DEFAULT_BUBBLE_HANDOFF_TRANSPARENCY_STREAM_TRANSPORTS,
+    DEFAULT_LLM_MAX_TOKENS,
+)
 
 # 扁平字段（LLM__<TYPE>_API_KEY / _BASE_URL）支持的内置 provider 类型，
 # 用于把老式扁平配置自动展开成 name==type 的默认命名实例。
@@ -245,6 +249,15 @@ class AgentConfig(_EnvSettings):
     message_time_prefix: bool = True
     bubble_thinking: bool = True
     bubble_max_concurrent: int = 5
+    # participant_id 整串匹配这些 glob 时，向对方显式说明泡泡转交并标识回复。
+    # 环境变量传 JSON 数组；不含通配符的条目表示精确匹配，[] 可关闭全部默认匹配。
+    bubble_handoff_transparency_participant_matches: list[str] = Field(
+        default_factory=lambda: list(DEFAULT_BUBBLE_HANDOFF_TRANSPARENCY_PARTICIPANT_MATCHES)
+    )
+    # 通用 WebSocket/SSE 默认开启透明转交；空数组可显式关闭传输层匹配。
+    bubble_handoff_transparency_stream_transports: list[Literal["websocket", "sse"]] = Field(
+        default_factory=lambda: list(DEFAULT_BUBBLE_HANDOFF_TRANSPARENCY_STREAM_TRANSPORTS)
+    )
     # 超时泡泡可在该窗口内通过 bubble_spawn(bubble_id=...) 接着执行；0 表示禁用续跑。
     bubble_timeout_resume_seconds: int = Field(default=300, ge=0)
 

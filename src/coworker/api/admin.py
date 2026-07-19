@@ -511,7 +511,10 @@ def _bubble_dict(bubble: Bubble) -> JsonObject:
         "model": bubble.model,
         "cycles_used": bubble.cycles_used,
         "max_cycles": bubble.max_cycles,
-        "participant_id": bubble.participant_id,
+        "participant_id": str(getattr(bubble, "participant_id", "")),
+        "conversation_id": str(getattr(bubble, "conversation_id", "")),
+        "handoff_transparency": bool(getattr(bubble, "handoff_transparency", False)),
+        "resume_count": _as_int(getattr(bubble, "resume_count", 0)),
         "palaces": cast(JsonValue, bubble.palaces),
         "created_at": bubble.created_at.isoformat(),
         "finished_at": bubble.finished_at.isoformat() if bubble.finished_at else None,
@@ -747,6 +750,9 @@ def _bubble_log_summary(path: Path) -> JsonObject | None:
         "cycles_used": _as_int(meta.get("cycles_used")),
         "max_cycles": _as_int(meta.get("max_cycles"), max_cycles),
         "participant_id": str(meta.get("participant_id") or ""),
+        "conversation_id": str(meta.get("conversation_id") or ""),
+        "handoff_transparency": bool(meta.get("handoff_transparency")),
+        "resume_count": _as_int(meta.get("resume_count")),
         "palaces": cast(JsonValue, meta.get("palaces") or []),
         "created_at": str(first.get("ts") or ""),
         "finished_at": str(meta.get("ts") or ""),
@@ -763,6 +769,10 @@ def _bubble_snapshot(bubble: Bubble) -> dict[str, object]:
         "goal": bubble.goal,
         "result": bubble.result,
         "error": bubble.error,
+        "participant_id": str(getattr(bubble, "participant_id", "")),
+        "conversation_id": str(getattr(bubble, "conversation_id", "")),
+        "handoff_transparency": bool(getattr(bubble, "handoff_transparency", False)),
+        "resume_count": _as_int(getattr(bubble, "resume_count", 0)),
         "content": (
             "详细日志尚未写入，刷新后可重试。"
             if bubble.status == "running"

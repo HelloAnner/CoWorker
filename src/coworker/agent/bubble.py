@@ -30,6 +30,10 @@ class Bubble:
     cycles_used: int = 0
     # 该泡泡服务的对象 id（用于续接路由；空表示非特定对象）。
     participant_id: str = ""
+    # 可选的会话绑定。与 participant_id 一起用于把后续通信精确交给该泡泡。
+    conversation_id: str = ""
+    # 对已显式配置的通信对象，外部可见地标识泡泡接管、回复和结束。
+    handoff_transparency: bool = False
     # 挂载的宫殿名列表（续接路由时按宫殿/participant/目标配对）。
     palaces: list[str] = field(default_factory=list)
     # memory_tags 并集(来自挂载的宫殿),收尾时用于把结论按标签写回长期记忆。
@@ -116,6 +120,40 @@ class BubbleStore:
 
     def list_active(self) -> list[Bubble]:
         return list(self._active.values())
+
+    def find_active_for_message(
+        self,
+        participant_id: str,
+        conversation_id: str | None = None,
+    ) -> Bubble | None:
+        """Return the unambiguous active bubble bound to an inbound message.
+
+        A conversation-specific binding wins over a participant-only binding.
+        If two bubbles could receive the same message, deliberately return None:
+        sending it to the main loop is safer than silently handing it to the
+        wrong task.
+        """
+        candidates = [
+            bubble
+            for bubble in self._active.values()
+            if not bubble.is_terminal() and bubble.participant_id == participant_id
+        ]
+        if not candidates:
+            return None
+
+        if conversation_id:
+            exact = [
+                bubble
+                for bubble in candidates
+                if bubble.conversation_id == conversation_id
+            ]
+            if len(exact) == 1:
+                return exact[0]
+            if len(exact) > 1:
+                return None
+
+        participant_only = [bubble for bubble in candidates if not bubble.conversation_id]
+        return participant_only[0] if len(participant_only) == 1 else None
 
     def mark_done(self, bubble: Bubble) -> None:
         bubble.finished_at = datetime.now()

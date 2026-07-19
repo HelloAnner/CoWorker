@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING
 
 from loguru import logger
 
+from coworker.agent.incoming_content import build_content_blocks
 from coworker.core.constants import TICK_TAG
 from coworker.core.exceptions import RestartRequestedException
 from coworker.core.types import AgentState, IncomingEvent, Message, ToolResult
@@ -29,46 +30,6 @@ if TYPE_CHECKING:
     from coworker.prompts.system_prompt import SystemPromptBuilder
     from coworker.tools.reasoning_tools import TaskStore
     from coworker.tools.registry import ToolRegistry
-
-# 把 IncomingEvent.source 翻译成给模型看的人类可读来源标签，
-# 让模型知道每条消息从哪个信道进来（影响回复路由 / 语气 / 附件是否可用）。
-# 仅信道类来源（有真实发送方、回复需选信道）才会用到这些标签。
-_SOURCE_LABELS: dict[str, str] = {
-    "file": "文件投递",
-    "rest": "REST API",
-    "websocket": "WebSocket",
-    "wecom": "企业微信",
-    "bubble": "气泡",
-    "codex": "Codex",
-}
-
-# 内容已自带 [闹钟提醒]/[代码任务完成] 等自描述前缀的来源：原样透传，
-# 不再套「[来自X][participant]的消息:」外壳，避免三重冗余。
-_SELF_DESCRIBING_SOURCES = {"alarm", "code_job", "task_reminder"}
-
-# 系统通知：participant_id 是占位符，但 content 不一定自带来源标记
-# （如「记忆树回溯完成…」「图片分析结果…」），统一加 [系统] 前缀以标明来自系统。
-_SYSTEM_SOURCES = {"system", "compress_memory"}
-
-
-def _source_label(source: str) -> str:
-    return _SOURCE_LABELS.get(source, source)
-
-
-def _conversation_label(event: IncomingEvent) -> str:
-    return f"[conversation:{event.conversation_id}]" if event.conversation_id else ""
-
-
-def _format_event_text(event: IncomingEvent) -> str:
-    if event.source in _SELF_DESCRIBING_SOURCES:
-        return event.content
-    if event.source in _SYSTEM_SOURCES:
-        return f"[系统] {event.content}"
-    return (
-        f"[来自{_source_label(event.source)}][{event.participant_id}]"
-        f"{_conversation_label(event)}的消息:\n{event.content}"
-    )
-
 
 # 连续错误阈值：超过此数量的连续错误将触发恢复措施
 _MAX_CONSECUTIVE_ERRORS = 5
@@ -445,47 +406,7 @@ class AgentLoop:
 
     @staticmethod
     def _build_content_blocks(events: list[IncomingEvent]) -> str | list[dict]:
-        if len(events) == 1 and not events[0].attachments:
-            return _format_event_text(events[0])
-
-        blocks: list[dict] = []
-        for event in events:
-            if event.content:
-                blocks.append({"type": "text", "text": _format_event_text(event)})
-            for att in event.attachments:
-                if att.media_type.startswith("image/") and att.data is not None:
-                    blocks.append({
-                        "type": "image",
-                        "source": {
-                            "type": "base64",
-                            "media_type": att.media_type,
-                            "data": att.data,
-                        },
-                        "_filename": att.filename,
-                        "_saved_path": att.saved_path,
-                    })
-                elif att.media_type == "application/pdf" and att.data is not None:
-                    blocks.append({
-                        "type": "document",
-                        "source": {
-                            "type": "base64",
-                            "media_type": att.media_type,
-                            "data": att.data,
-                        },
-                        "_filename": att.filename,
-                        "_saved_path": att.saved_path,
-                    })
-                else:
-                    attachment_kind = "视频附件" if att.media_type.startswith("video/") else "附件"
-                    blocks.append({
-                        "type": "text",
-                        "text": (
-                            f"[{attachment_kind}: {att.filename} — 已保存至 "
-                            f"{att.saved_path}，可使用工具读取]"
-                        ),
-                    })
-
-        return blocks
+        return build_content_blocks(events)
 
     async def _act(self, tool_calls) -> None:
         results: list[ToolResult] = []

@@ -2,6 +2,7 @@ import {
   type FormEvent,
   type KeyboardEvent,
   useEffect,
+  useMemo,
   useRef,
   useState,
 } from 'react';
@@ -12,11 +13,19 @@ import { t } from '../i18n/admin';
 type ChatRole = 'user' | 'assistant';
 type ConnectionState = 'idle' | 'connecting' | 'connected' | 'reconnecting' | 'error';
 
+type BubbleChatMeta = {
+  id: string;
+  kind: 'handoff' | 'reply';
+  phase: 'start' | 'end' | null;
+  resumed: boolean;
+};
+
 type ChatMessage = {
   id: string;
   role: ChatRole;
   content: string;
   createdAt: number;
+  bubble?: BubbleChatMeta | null;
 };
 
 type ChatProfile = {
@@ -28,6 +37,7 @@ const CHAT_PROFILE_STORAGE_KEY = 'coworker-web-chat-profile';
 const LEGACY_USER_NAME_STORAGE_KEY = 'coworker-web-chat-user-name';
 const CHAT_HISTORY_PREFIX = 'coworker-web-chat-history:';
 const MAX_STORED_MESSAGES = 160;
+const BUBBLE_REPLY_PREFIX = '🫧 泡泡：';
 
 function newId(): string {
   if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
@@ -83,8 +93,22 @@ function historyKey(clientId: string): string {
   return `${CHAT_HISTORY_PREFIX}${clientId}`;
 }
 
-function createMessage(role: ChatRole, content: string): ChatMessage {
-  return { id: newId(), role, content, createdAt: Date.now() };
+function readBubbleMetadata(value: unknown): BubbleChatMeta | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const bubble = value as Record<string, unknown>;
+  const id = typeof bubble.id === 'string' ? bubble.id.trim() : '';
+  const kind = bubble.kind === 'handoff' || bubble.kind === 'reply' ? bubble.kind : null;
+  if (!id || !kind) return null;
+  const phase = bubble.phase === 'start' || bubble.phase === 'end' ? bubble.phase : null;
+  return { id, kind, phase, resumed: bubble.resumed === true };
+}
+
+function createMessage(
+  role: ChatRole,
+  content: string,
+  bubble: BubbleChatMeta | null = null,
+): ChatMessage {
+  return { id: newId(), role, content, createdAt: Date.now(), bubble };
 }
 
 function loadChatHistory(clientId: string): ChatMessage[] {
@@ -114,6 +138,7 @@ function loadChatHistory(clientId: string): ChatMessage[] {
         createdAt: typeof message.createdAt === 'number' && Number.isFinite(message.createdAt)
           ? message.createdAt
           : Date.now(),
+        bubble: readBubbleMetadata(message.bubble),
       }];
     }).slice(-MAX_STORED_MESSAGES);
   } catch {
@@ -135,25 +160,52 @@ function participantIdFor(profile: ChatProfile): string {
   return `web:${participantNameSegment(profile.name)}:${profile.clientId}`;
 }
 
-function readOutboundText(raw: unknown): string {
+function readOutboundMessage(raw: unknown): { content: string; bubble: BubbleChatMeta | null } {
   const text = typeof raw === 'string' ? raw.trim() : String(raw ?? '').trim();
-  if (!text) return '';
+  if (!text) return { content: '', bubble: null };
 
   try {
     const decoded: unknown = JSON.parse(text);
-    if (!decoded || typeof decoded !== 'object' || Array.isArray(decoded)) return text;
+    if (!decoded || typeof decoded !== 'object' || Array.isArray(decoded)) {
+      return { content: text, bubble: null };
+    }
 
     const payload = decoded as Record<string, unknown>;
+    const extra = payload.extra && typeof payload.extra === 'object' && !Array.isArray(payload.extra)
+      ? payload.extra as Record<string, unknown>
+      : null;
+    const bubble = readBubbleMetadata(extra?.bubble);
     const message = payload.message ?? payload.content;
-    if (typeof message === 'string' && message.trim()) return message.trim();
+    if (typeof message === 'string' && message.trim()) {
+      return { content: message.trim(), bubble };
+    }
 
     if (Array.isArray(payload.attachments) && payload.attachments.length) {
-      return t('收到了 {{count}} 个附件。', { count: payload.attachments.length });
+      return {
+        content: t('收到了 {{count}} 个附件。', { count: payload.attachments.length }),
+        bubble,
+      };
     }
-    return '';
+    return { content: '', bubble };
   } catch {
-    return text;
+    return { content: text, bubble: null };
   }
+}
+
+function activeBubbleFromMessages(messages: ChatMessage[]): BubbleChatMeta | null {
+  let active: BubbleChatMeta | null = null;
+  for (const message of messages) {
+    const bubble = message.bubble;
+    if (!bubble || bubble.kind !== 'handoff') continue;
+    if (bubble.phase === 'start') active = bubble;
+    else if (bubble.phase === 'end' && active?.id === bubble.id) active = null;
+  }
+  return active;
+}
+
+function bubbleHandoffCopy(bubble: BubbleChatMeta): string {
+  if (bubble.phase === 'end') return t('泡泡已结束，主线继续接手');
+  return bubble.resumed ? t('泡泡再次接管会话') : t('泡泡已接管会话');
 }
 
 function connectionCopy(state: ConnectionState): string {
@@ -208,6 +260,7 @@ export function ChatDock({ counterpartName }: { counterpartName: string }) {
   const endRef = useRef<HTMLDivElement | null>(null);
   const hasSharedNameRef = useRef(false);
   const userName = profile.name;
+  const activeBubble = useMemo(() => activeBubbleFromMessages(messages), [messages]);
 
   useEffect(() => {
     persistChatProfile(profile);
@@ -255,7 +308,7 @@ export function ChatDock({ counterpartName }: { counterpartName: string }) {
 
     source.onmessage = event => {
       if (disposed || eventSourceRef.current !== source) return;
-      const content = readOutboundText(event.data);
+      const { content, bubble } = readOutboundMessage(event.data);
       if (!content) return;
 
       if (content.startsWith('连接被拒绝：')) {
@@ -266,8 +319,13 @@ export function ChatDock({ counterpartName }: { counterpartName: string }) {
         return;
       }
 
-      setMessages(current => [...current, createMessage('assistant', content)].slice(-MAX_STORED_MESSAGES));
-      setPendingReplies(current => Math.max(0, current - 1));
+      setMessages(current => [
+        ...current,
+        createMessage('assistant', content, bubble),
+      ].slice(-MAX_STORED_MESSAGES));
+      if (bubble?.kind !== 'handoff') {
+        setPendingReplies(current => Math.max(0, current - 1));
+      }
     };
 
     source.onerror = () => {
@@ -581,24 +639,58 @@ export function ChatDock({ counterpartName }: { counterpartName: string }) {
                     <p>{t('把需要一起想的事、想完成的事，直接告诉 {{name}}。', { name: counterpartName })}</p>
                   </div>
                 )}
-                {messages.map(message => (
-                  <article className={`msg ${message.role === 'user' ? 'user' : 'ai'}`} key={message.id}>
-                    {message.content}
-                  </article>
-                ))}
+                {messages.map(message => {
+                  const bubble = message.bubble;
+                  if (bubble?.kind === 'handoff') {
+                    return (
+                      <article className={`msg bubble-handoff phase-${bubble.phase || 'unknown'}`} key={message.id}>
+                        <span className="bubble-handoff-mark" aria-hidden="true">🫧</span>
+                        <span>{bubbleHandoffCopy(bubble)}</span>
+                        <code title={bubble.id}>{bubble.id}</code>
+                      </article>
+                    );
+                  }
+                  const bubbleReply = bubble?.kind === 'reply';
+                  const content = bubbleReply && message.content.startsWith(BUBBLE_REPLY_PREFIX)
+                    ? message.content.slice(BUBBLE_REPLY_PREFIX.length).trimStart()
+                    : message.content;
+                  return (
+                    <article
+                      className={`msg ${message.role === 'user' ? 'user' : 'ai'}${bubbleReply ? ' bubble-reply' : ''}`}
+                      key={message.id}
+                    >
+                      {bubbleReply && (
+                        <span className="bubble-reply-label">
+                          <span aria-hidden="true">🫧</span>
+                          {t('泡泡直接回复')}
+                          <code title={bubble.id}>{bubble.id}</code>
+                        </span>
+                      )}
+                      <span>{content}</span>
+                    </article>
+                  );
+                })}
                 {pendingReplies > 0 && (
                   <div className="msg thinking" role="status">
                     <span className="typing-dot" />
                     <span className="typing-dot" />
                     <span className="typing-dot" />
-                    <span>{t('正在组织回应')}</span>
+                    <span>{activeBubble ? t('泡泡正在处理') : t('正在组织回应')}</span>
                   </div>
                 )}
                 <div ref={endRef} />
               </div>
 
               <div className={`chat-tool chat-tool-${connection}`} role="status" aria-live="polite">
-                <span className="tool-live"><i className="live-dot" aria-hidden="true" />{status}</span>
+                <span className="chat-tool-statuses">
+                  <span className="tool-live"><i className="live-dot" aria-hidden="true" />{status}</span>
+                  {activeBubble && (
+                    <span className="chat-bubble-live" title={activeBubble.id}>
+                      <span aria-hidden="true">🫧</span>
+                      {t('{{id}} 接管中', { id: activeBubble.id })}
+                    </span>
+                  )}
+                </span>
                 <span className="chat-session-note">{visibleConnectionDetail || t('回复通过 SSE 实时送达；界面副本保存在此浏览器。')}</span>
               </div>
 

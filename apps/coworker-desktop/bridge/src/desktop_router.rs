@@ -1385,6 +1385,10 @@ impl DesktopRouter {
             .and_then(Value::as_str)
             .filter(|value| !value.is_empty());
         let extra = mapping.get("extra").and_then(Value::as_object);
+        let bubble_metadata = extra
+            .and_then(|value| value.get("bubble"))
+            .filter(|value| value.is_object())
+            .cloned();
         let request_id = extra
             .and_then(|value| value.get("request_id"))
             .and_then(Value::as_str)
@@ -1700,6 +1704,7 @@ impl DesktopRouter {
                     &json!({
                         "participant_id": registration.participant_id,
                         "attachments": attachments,
+                        "bubble": bubble_metadata.clone(),
                     }),
                 )?;
                 publish_actor_stream_event(ActorStreamEvent {
@@ -1742,6 +1747,7 @@ impl DesktopRouter {
                 let message_metadata = json!({
                     "attachments": attachments,
                     "native_content": actor_content.clone(),
+                    "bubble": bubble_metadata.clone(),
                 });
                 if actor == ActorId::Claude
                     && let Some(conversation_id) = conversation_id
@@ -3088,7 +3094,15 @@ mod delivery_tests {
         let command = json!({
             "message": "hello from coworker",
             "conversation_id": "local-event-thread",
-            "extra": {"request_id": request_id}
+            "extra": {
+                "request_id": request_id,
+                "bubble": {
+                    "id": "bbl_frontend",
+                    "kind": "handoff",
+                    "phase": "start",
+                    "resumed": false
+                }
+            }
         })
         .to_string();
         let mut events = crate::actor::subscribe_actor_stream_events();
@@ -3121,6 +3135,17 @@ mod delivery_tests {
             .query_row("SELECT COUNT(*) FROM outbox", [], |row| row.get(0))
             .expect("command result count");
         assert_eq!(result_count, 1);
+        let metadata_json: String = connection
+            .query_row(
+                "SELECT metadata_json FROM messages WHERE conversation_id=?1 LIMIT 1",
+                ["local-event-thread"],
+                |row| row.get(0),
+            )
+            .expect("local message metadata");
+        let metadata: Value =
+            serde_json::from_str(&metadata_json).expect("valid local message metadata");
+        assert_eq!(metadata["bubble"]["id"], "bbl_frontend");
+        assert_eq!(metadata["bubble"]["phase"], "start");
 
         let event = tokio::time::timeout(Duration::from_secs(1), async {
             loop {

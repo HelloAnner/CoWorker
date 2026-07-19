@@ -322,11 +322,15 @@ def test_bubble_history_survives_restart_and_preserves_raw_values(tmp_path):
             "__meta__": True,
             "id": "bbl_260716120000",
             "goal": "核对发布",
-            "status": "done",
-            "cycles_used": 1,
-            "elapsed_seconds": 2,
-            "ts": "2026-07-16T12:00:02",
-        },
+                "status": "done",
+                "cycles_used": 1,
+                "elapsed_seconds": 2,
+                "participant_id": "wecom:alice",
+                "conversation_id": "conv-frontend",
+                "handoff_transparency": True,
+                "resume_count": 1,
+                "ts": "2026-07-16T12:00:02",
+            },
     ]
     path.write_text(
         "\n".join(json.dumps(entry, ensure_ascii=False) for entry in entries),
@@ -337,8 +341,13 @@ def test_bubble_history_survives_restart_and_preserves_raw_values(tmp_path):
 
     response = client.get("/api/admin/bubbles", headers=headers)
     assert response.status_code == 200
-    assert response.json()["bubbles"][0]["goal"] == "核对发布"
-    assert response.json()["bubbles"][0]["max_cycles"] == 4
+    record = response.json()["bubbles"][0]
+    assert record["goal"] == "核对发布"
+    assert record["max_cycles"] == 4
+    assert record["participant_id"] == "wecom:alice"
+    assert record["conversation_id"] == "conv-frontend"
+    assert record["handoff_transparency"] is True
+    assert record["resume_count"] == 1
     assert response.json()["total"] == 1
     assert response.json()["has_more"] is False
 

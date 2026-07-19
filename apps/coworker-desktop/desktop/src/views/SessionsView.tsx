@@ -6,6 +6,7 @@ import type { DictKey } from "../i18n/en";
 import {
   fileName,
   formatSessionTime,
+  type BubbleTimelineMeta,
   type TimelineAttachment,
   type TimelineMessageGroup,
 } from "../lib/bridgeLogic";
@@ -63,6 +64,7 @@ export function SessionsView({
   messagesLoading,
   onLoadEarlierMessages,
   sessionMessageGroups,
+  activeBubble,
   onDownloadAttachment,
   onDragAttachment,
   canUseComposer,
@@ -112,6 +114,7 @@ export function SessionsView({
   messagesLoading: boolean;
   onLoadEarlierMessages: () => void;
   sessionMessageGroups: TimelineMessageGroup[];
+  activeBubble?: BubbleTimelineMeta | null;
   onDownloadAttachment: (attachment: TimelineAttachment) => void;
   onDragAttachment: (path: string) => void;
   canUseComposer: boolean;
@@ -295,17 +298,25 @@ export function SessionsView({
               </p>
             )}
           </div>
-          <span className={canUseComposer ? "statePill" : "dirtyMark"}>
-            {presentation?.statusText ?? (selectedSession
-              ? canUseComposer
-                ? t("sessions.statusContinueEnabled")
-                : selectedSession.writable
-                  ? t("sessions.statusOfflineReadable")
-                  : t("sessions.statusReadOnly")
-              : bridgeRunning
-                ? t("sessions.statusDraft")
-                : t("sessions.statusOfflineReadable"))}
-          </span>
+          <div className="sessionStateStack">
+            {activeBubble && (
+              <span className="bubbleHandoffPill" title={activeBubble.id}>
+                <i aria-hidden="true">🫧</i>
+                {t("actors.bubbleActive", { id: activeBubble.id })}
+              </span>
+            )}
+            <span className={canUseComposer ? "statePill" : "dirtyMark"}>
+              {presentation?.statusText ?? (selectedSession
+                ? canUseComposer
+                  ? t("sessions.statusContinueEnabled")
+                  : selectedSession.writable
+                    ? t("sessions.statusOfflineReadable")
+                    : t("sessions.statusReadOnly")
+                : bridgeRunning
+                  ? t("sessions.statusDraft")
+                  : t("sessions.statusOfflineReadable"))}
+            </span>
+          </div>
         </header>
 
         <div className="sessionTimeline" ref={sessionTimelineRef} onScroll={handleTimelineScroll}>
@@ -327,6 +338,7 @@ export function SessionsView({
                   <div className="messageBody">
                     <div className="messageMeta">
                       <strong>{message.author_label}</strong>
+                      {message.bubble && <code className="bubbleMessageId">{message.bubble.id}</code>}
                       <span>{formatSessionTime(message.timestamp)}</span>
                       {message.streaming && <em>streaming</em>}
                     </div>

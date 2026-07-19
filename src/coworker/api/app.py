@@ -689,7 +689,11 @@ async def websocket_endpoint(ws: WebSocket, participant_id: str):
     sender_task: asyncio.Task | None = None
 
     if _communicate:
-        registered = _communicate.register_ws(participant_id, queue)
+        registered = _communicate.register_ws(
+            participant_id,
+            queue,
+            transport="websocket",
+        )
         if not registered:
             logger.info(f"WS rejected duplicate participant_id: {participant_id}")
             await _reject_websocket(ws, participant_id)
@@ -763,7 +767,11 @@ async def sse_endpoint(
     queue: asyncio.Queue = asyncio.Queue()
     registered = False
     if _communicate:
-        registered = _communicate.register_ws(participant_id, queue)
+        registered = _communicate.register_ws(
+            participant_id,
+            queue,
+            transport="sse",
+        )
         if not registered:
             logger.info(f"SSE rejected duplicate participant_id: {participant_id}")
             return _rejected_sse_response(participant_id)

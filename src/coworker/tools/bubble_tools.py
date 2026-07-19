@@ -3,6 +3,9 @@ from __future__ import annotations
 from datetime import datetime
 from typing import TYPE_CHECKING
 
+from coworker.agent.bubble_handoff import (
+    BubbleHandoffMatcher,
+)
 from coworker.core.types import ToolResult
 from coworker.tools.base import Tool, ToolDefinition
 
@@ -18,6 +21,7 @@ if TYPE_CHECKING:
     from coworker.palaces.loader import Palace, PalaceLoader
     from coworker.prompts.system_prompt import SystemPromptBuilder
     from coworker.skills.loader import SkillLoader
+    from coworker.tools.communicate_tool import CommunicateTool
     from coworker.tools.registry import ToolRegistry
 
 
@@ -80,6 +84,8 @@ class BubbleSpawnTool(Tool):
         palace_loader: PalaceLoader | None = None,
         skill_loader: SkillLoader | None = None,
         long_term: LongTermMemory | None = None,
+        communicate: CommunicateTool | None = None,
+        handoff_matcher: BubbleHandoffMatcher | None = None,
     ) -> None:
         self._store = store
         self._short_term = short_term
@@ -93,6 +99,8 @@ class BubbleSpawnTool(Tool):
         self._palace_loader = palace_loader
         self._skill_loader = skill_loader
         self._long_term = long_term
+        self._communicate = communicate
+        self._handoff_matcher = handoff_matcher or BubbleHandoffMatcher()
 
     @property
     def definition(self) -> ToolDefinition:
@@ -138,7 +146,11 @@ class BubbleSpawnTool(Tool):
                     },
                     "participant_id": {
                         "type": "string",
-                        "description": "该任务服务的对象 id（如某用户）。填上后泡泡会在 bubble_list 中标注归属，便于后续把该对象的续接消息用 bubble_send 派回同一泡泡。非特定对象可留空。",
+                        "description": "该任务服务的对象 id（如某用户）。填上后，该对象的后续通信会在无歧义时直接转交给此活跃泡泡；泡泡也只能直接回复该对象。非特定对象可留空。",
+                    },
+                    "conversation_id": {
+                        "type": "string",
+                        "description": "可选的会话 ID。与 participant_id 一同绑定时，匹配该会话的后续通信优先直接转交给此泡泡，并限制泡泡只在该会话内回复。",
                     },
                     "thinking": {
                         "type": "boolean",
@@ -166,6 +178,7 @@ class BubbleSpawnTool(Tool):
         fresh_start: bool = False,
         palaces: list[str] | None = None,
         participant_id: str = "",
+        conversation_id: str = "",
         thinking: bool = True,
         provider: str = "",
         model: str = "",
@@ -250,7 +263,11 @@ class BubbleSpawnTool(Tool):
             return ToolResult(tool_call_id="", content=result, is_error=True)
         bubble = result
         bubble.forked_tree = forked_tree
-        bubble.participant_id = participant_id
+        bubble.participant_id = participant_id.strip() if isinstance(participant_id, str) else ""
+        bubble.conversation_id = conversation_id.strip() if isinstance(conversation_id, str) else ""
+        bubble.handoff_transparency = self._should_use_handoff_transparency(
+            bubble.participant_id
+        )
         bubble.palaces = [p.name for p in resolved_palaces]
 
         if not fresh_start:
@@ -306,13 +323,21 @@ class BubbleSpawnTool(Tool):
         )
         thinking_desc = "" if thinking else "\n模式：非思考（快速执行）"
         model_desc = f"\n模型：{bubble.provider}/{bubble.model}"
+        communication_desc = ""
+        if bubble.participant_id:
+            communication_desc = f"\n通信绑定：{bubble.participant_id}"
+            if bubble.conversation_id:
+                communication_desc += f" / {bubble.conversation_id}"
+            communication_desc += "（后续匹配消息会直接转交给此泡泡）"
+            if bubble.handoff_transparency:
+                communication_desc += "\n通信透明标识：已启用（转交、回复和结束会向对方说明）"
         return ToolResult(
             tool_call_id="",
             content=(
                 f"泡泡已创建：id={bubble.id}\n"
                 f"目标：{goal}\n"
                 f"最大轮次：{max_cycles}\n"
-                f"{context_desc}{palace_desc}{thinking_desc}{model_desc}\n"
+                f"{context_desc}{palace_desc}{thinking_desc}{model_desc}{communication_desc}\n"
                 f"使用 bubble_check('{bubble.id}') 查看进度，"
                 f"bubble_send('{bubble.id}', '消息') 与其通信。"
             ),
@@ -351,6 +376,10 @@ class BubbleSpawnTool(Tool):
         if continuation.strip():
             await bubble.inbox.put(("主线", continuation.strip()))
         try:
+            bubble.handoff_transparency = (
+                bubble.handoff_transparency
+                or self._should_use_handoff_transparency(bubble.participant_id)
+            )
             self.start_existing(bubble)
         except Exception as e:
             # A failed startup must not leave a record that appears to be running.
@@ -390,8 +419,20 @@ class BubbleSpawnTool(Tool):
             usage_stats=self._usage_stats,
             usage_logs_root=self._logs_dir,
             long_term=self._long_term,
+            communicate=self._communicate,
         )
         bubble.task = asyncio.create_task(mini_loop.run(), name=f"bubble-{bubble.id}")
+
+    def _should_use_handoff_transparency(self, participant_id: str) -> bool:
+        stream_transport = (
+            self._communicate.live_stream_transport(participant_id)
+            if self._communicate is not None
+            else None
+        )
+        return self._handoff_matcher.matches(
+            participant_id,
+            stream_transport=stream_transport,
+        )
 
     async def _inject_palaces(
         self, bubble: Bubble, resolved_palaces: list[Palace], goal: str
@@ -514,6 +555,10 @@ class BubbleCheckTool(Tool):
         ]
         if bubble.participant_id:
             lines.append(f"服务对象：{bubble.participant_id}")
+        if bubble.conversation_id:
+            lines.append(f"服务会话：{bubble.conversation_id}")
+        if bubble.handoff_transparency:
+            lines.append("通信透明标识：已启用")
         if bubble.palaces:
             lines.append(f"挂载宫殿：{', '.join(bubble.palaces)}")
         if bubble.provider or bubble.model:
@@ -653,6 +698,10 @@ class BubbleListTool(Tool):
             tags = []
             if b.participant_id:
                 tags.append(f"对象={b.participant_id}")
+            if b.conversation_id:
+                tags.append(f"会话={b.conversation_id}")
+            if b.handoff_transparency:
+                tags.append("透明标识=开")
             if b.palaces:
                 tags.append(f"宫殿={','.join(b.palaces)}")
             if b.provider or b.model:

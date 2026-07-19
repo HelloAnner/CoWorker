@@ -57,6 +57,44 @@ ws.send("Hello!");
 
 Only one SSE or WebSocket long-lived connection may use the same `participant_id` at a time; the first connection wins. A later WebSocket with the same ID receives a rejection message and closes with code `1008`. A later SSE connection receives one rejection event and then ends. After the existing connection closes, the same ID can connect again.
 
+### Direct Bubble handoff
+
+An active Bubble bound to the same `participant_id` (and optional `conversation_id`) receives matching WebSocket or REST inbound messages and sends direct replies back through that ID's live stream. SSE is outbound-only: after subscribing to `/sse/{participant_id}`, a client sends subsequent inbound messages through `POST /messages` with the same `sender_id`; they are still handed directly to the Bubble.
+
+To enable transparent handoff by communication participant, configure case-sensitive full-ID globs:
+
+```env
+AGENT__BUBBLE_HANDOFF_TRANSPARENCY_PARTICIPANT_MATCHES=["wecom:*","coworker-desktop:*:local:*"]
+```
+
+`*`, `?`, and `[...]` are glob wildcards; an entry without wildcards is an exact `participant_id`. These defaults make WeCom and the Desktop `local` actor transparent. Set `[]` to disable those default matches.
+
+Every live generic WebSocket/SSE session receives the visible Bubble handoff, labeled replies, and completion notice by default. The corresponding default is:
+
+```env
+AGENT__BUBBLE_HANDOFF_TRANSPARENCY_STREAM_TRANSPORTS=["websocket","sse"]
+```
+
+List only one value to enable transparency for that transport alone, or set `[]` to disable both. Desktop identities never fall through to this generic rule: they must explicitly match a participant glob, so the defaults make only `coworker-desktop:<desktop_id>:local:…` transparent, never the `claude` or `codex` actors.
+
+Transparent handoff messages also carry structured provenance in outbound JSON under `extra.bubble`. Frontends should prefer it for handoff state instead of parsing display copy:
+
+```json
+{
+  "message": "🫧 This conversation has been handed to a Bubble…",
+  "extra": {
+    "bubble": {
+      "id": "bbl_260719120000",
+      "kind": "handoff",
+      "phase": "start",
+      "resumed": false
+    }
+  }
+}
+```
+
+Completion notices use `phase: "end"`. Direct Bubble replies use `kind: "reply"`. Other channels retain the `🫧 泡泡：` text prefix as a fallback for older clients; Desktop has guaranteed support for the structured metadata, so it receives the original reply body and neither injects nor parses that prefix.
+
 Messages, registration, SSE, and WebSocket operations for `coworker-desktop:*` participants require `Authorization: Bearer <API__COMMUNICATION_TOKEN>` in the default production mode. This check is disabled only when both the server and Desktop explicitly set `development_mode=true`; that mode is only for local debugging on a loopback address.
 
 Browser examples:

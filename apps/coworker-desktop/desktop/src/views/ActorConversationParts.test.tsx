@@ -78,4 +78,37 @@ describe("actor conversation boundaries", () => {
     expect(converted[1]).toMatchObject({ id: "tool-result", kind: "tool_result", item_id: "toolu_1", is_error: false });
     expect(converted[1].text).toContain("file contents");
   });
+
+  it("preserves Bubble handoff metadata and reply content", () => {
+    const converted = actorMessagesToTimelineMessages([
+      message({
+        author_kind: "coworker",
+        id: "handoff",
+        content: "fallback handoff copy",
+        metadata: {
+          bubble: { id: "bbl_frontend", kind: "handoff", phase: "start", resumed: true },
+        },
+      }),
+      message({
+        author_kind: "coworker",
+        id: "reply",
+        content: "🫧 泡泡：这段正文应原样保留",
+        metadata: {
+          bubble: { id: "bbl_frontend", kind: "reply" },
+        },
+      }),
+    ], "local", t);
+
+    expect(converted[0]).toMatchObject({
+      author_kind: "bubble",
+      kind: "bubble_handoff",
+      bubble: { id: "bbl_frontend", phase: "start", resumed: true },
+    });
+    expect(converted[1]).toMatchObject({
+      author_kind: "bubble",
+      kind: "bubble_reply",
+      text: "🫧 泡泡：这段正文应原样保留",
+      bubble: { id: "bbl_frontend", kind: "reply" },
+    });
+  });
 });

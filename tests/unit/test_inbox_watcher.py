@@ -44,6 +44,30 @@ class TestInboxWatcher:
         assert watcher.message_event.is_set()
 
     @pytest.mark.asyncio
+    async def test_interceptors_run_in_registration_order(self):
+        watcher = InboxWatcher("data/inbox")
+        seen: list[str] = []
+        watcher.set_interceptor(lambda event: seen.append("first") or False)
+        watcher.add_interceptor(lambda event: seen.append("second") or False)
+
+        await watcher.push(_event())
+
+        assert seen == ["first", "second"]
+        assert len(await watcher.get_pending()) == 1
+
+    @pytest.mark.asyncio
+    async def test_consuming_interceptor_stops_later_interceptors_and_main_inbox(self):
+        watcher = InboxWatcher("data/inbox")
+        seen: list[str] = []
+        watcher.set_interceptor(lambda event: seen.append("first") or True)
+        watcher.add_interceptor(lambda event: seen.append("second") or False)
+
+        await watcher.push(_event())
+
+        assert seen == ["first"]
+        assert await watcher.get_pending() == []
+
+    @pytest.mark.asyncio
     async def test_get_pending_clears_event_when_queue_empty(self):
         watcher = InboxWatcher("data/inbox")
         await watcher.push(_event())
