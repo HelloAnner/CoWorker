@@ -1,0 +1,146 @@
+name: Publish Container Images
+
+on:
+  push:
+    tags:
+      - "coworker-desktop-v*"
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "Git ref to build"
+        required: true
+        default: "main"
+        type: string
+      version:
+        description: "Version to publish (must match VERSION, for example 0.2.4)"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: container-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: Publish GHCR images
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+
+      - name: Check project version
+        run: python scripts/check_version.py
+
+      - name: Resolve release image tags
+        id: release
+        shell: bash
+        env:
+          MANUAL_VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+
+          if [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" ]]; then
+            version="$MANUAL_VERSION"
+          else
+            version="${GITHUB_REF_NAME#coworker-desktop-v}"
+          fi
+
+          expected_version="$(tr -d '\r\n' < VERSION)"
+          if [[ "$version" != "$expected_version" ]]; then
+            echo "::error::Requested version $version does not match VERSION ($expected_version)."
+            exit 1
+          fi
+
+          if [[ ! "$version" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z.-]+)?$ ]]; then
+            echo "::error::Version must be a Docker-tag-compatible SemVer value without build metadata."
+            exit 1
+          fi
+
+          image="ghcr.io/${GITHUB_REPOSITORY,,}"
+          runtime_tags=("$image:$version")
+          embedder_tags=("$image:${version}-with-embedder")
+          offline_tags=("$image:${version}-offline")
+
+          # Prereleases never replace the moving stable aliases.
+          if [[ "$version" != *-* ]]; then
+            runtime_tags+=("$image:latest")
+            embedder_tags+=("$image:with-embedder")
+            offline_tags+=("$image:offline")
+          fi
+
+          write_tags() {
+            local name="$1"
+            shift
+            {
+              echo "$name<<EOF"
+              printf '%s\n' "$@"
+              echo "EOF"
+            } >> "$GITHUB_OUTPUT"
+          }
+
+          write_tags runtime_tags "${runtime_tags[@]}"
+          write_tags embedder_tags "${embedder_tags[@]}"
+          write_tags offline_tags "${offline_tags[@]}"
+          {
+            echo "image=$image"
+            echo "version=$version"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push standard image
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: ./Dockerfile
+          target: runtime
+          platforms: linux/amd64
+          push: true
+          tags: ${{ steps.release.outputs.runtime_tags }}
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.version=${{ steps.release.outputs.version }}
+
+      - name: Build and push preloaded embedding image
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: ./Dockerfile
+          target: with-embedder
+          platforms: linux/amd64
+          push: true
+          tags: ${{ steps.release.outputs.embedder_tags }}
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.version=${{ steps.release.outputs.version }}
+
+      - name: Build and push Hugging Face offline image
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: ./Dockerfile
+          target: offline
+          platforms: linux/amd64
+          push: true
+          tags: ${{ steps.release.outputs.offline_tags }}
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.version=${{ steps.release.outputs.version }}

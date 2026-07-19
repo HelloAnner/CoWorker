@@ -126,6 +126,42 @@ docker compose up --build
 docker compose build
 ```
 
+默认镜像会在长期记忆首次启用时下载本地 embedding 模型，并将缓存保存在
+`coworker-models` Docker 卷中；重建容器不会重复下载。这个模型不是对话使用的
+大模型。
+
+如部署环境无法在运行时访问 Hugging Face，或需要消除首次下载，可额外构建并发布
+预置 embedding 模型的镜像：
+
+```bash
+docker build --target with-embedder -t coworker:with-embedder .
+```
+
+用 Compose 构建该变体时：
+
+```bash
+COWORKER_BUILD_TARGET=with-embedder COWORKER_IMAGE=coworker:with-embedder docker compose up --build
+```
+
+可通过 `--build-arg EMBEDDER_MODEL=<HuggingFace 模型 ID>` 预置与
+`MEMORY__MEM0_EMBEDDER_MODEL` 一致的模型。已有记忆时不要直接更换 embedding 模型。
+
+如需禁止容器访问 Hugging Face Hub（不代表对话模型服务也离线），构建严格离线变体：
+
+```bash
+docker build --target offline -t coworker:offline .
+```
+
+用 Compose 构建该变体时：
+
+```bash
+COWORKER_BUILD_TARGET=offline COWORKER_IMAGE=coworker:offline docker compose up --build
+```
+
+该变体会在预置完成后设置 `HF_HUB_OFFLINE=1`。运行时配置的 embedding 模型必须与
+镜像中预置的模型一致，且 `coworker-models` 卷必须包含该模型；新卷会由镜像自动初始化。
+否则会直接失败而不会尝试联网下载。
+
 </details>
 
 <details>

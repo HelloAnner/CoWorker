@@ -127,6 +127,46 @@ To build the image without starting it:
 docker compose build
 ```
 
+The standard image downloads its local embedding model when long-term memory is first
+enabled and keeps the cache in the `coworker-models` Docker volume, so recreating a
+container does not download it again. This is not the model used for conversation.
+
+For deployments that cannot access Hugging Face at runtime, or that need to avoid the
+first-download delay, build and publish the optional image with the embedding model
+preloaded:
+
+```bash
+docker build --target with-embedder -t coworker:with-embedder .
+```
+
+To build that variant with Compose:
+
+```bash
+COWORKER_BUILD_TARGET=with-embedder COWORKER_IMAGE=coworker:with-embedder docker compose up --build
+```
+
+Use `--build-arg EMBEDDER_MODEL=<HuggingFace model ID>` to preload the same model as
+`MEMORY__MEM0_EMBEDDER_MODEL`. Do not change an embedding model directly while keeping
+existing memories.
+
+To prevent the container from accessing the Hugging Face Hub (this does not make the
+configured conversation-model provider offline), build the strict offline variant:
+
+```bash
+docker build --target offline -t coworker:offline .
+```
+
+To build that variant with Compose:
+
+```bash
+COWORKER_BUILD_TARGET=offline COWORKER_IMAGE=coworker:offline docker compose up --build
+```
+
+This variant sets `HF_HUB_OFFLINE=1` only after preloading the model. Its runtime
+embedding-model setting must match the model in the image, and the `coworker-models`
+volume must contain that model; a new volume is initialized from the image. Otherwise it
+fails instead of downloading at runtime.
+
 </details>
 
 <details>
