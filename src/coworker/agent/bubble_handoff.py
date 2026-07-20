@@ -155,11 +155,16 @@ class BubbleHandoffNotifier:
         ):
             return
         try:
+            outgoing_extra = (
+                extra
+                if self._communicate.supports_message_extra(bubble.participant_id)
+                else None
+            )
             result = await self._communicate.execute(
                 participant_id=bubble.participant_id,
                 conversation_id=bubble.conversation_id or None,
                 message=message,
-                extra=extra,
+                extra=outgoing_extra,
             )
             if result.is_error:
                 logger.warning(

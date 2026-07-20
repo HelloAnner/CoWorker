@@ -1208,6 +1208,38 @@ class TestFetchURLTool:
 
 
 class TestCommunicateToolCheckers:
+    def test_structured_extra_capability_follows_selected_transport(self, tmp_path):
+        tool = CommunicateTool(str(tmp_path / "outbox"))
+
+        async def sender(request: CommunicateRequest):
+            return ToolResult(tool_call_id="", content="ok")
+
+        tool.register_sender("plain:", sender)
+        tool.register_sender("rich:", sender, supports_extra=True)
+        queue: asyncio.Queue = asyncio.Queue()
+        tool.register_ws("stream-client", queue)
+
+        assert not tool.supports_message_extra("plain:alice")
+        assert tool.supports_message_extra("rich:alice")
+        assert tool.supports_message_extra("stream-client")
+        assert not tool.supports_message_extra("offline-client")
+
+    def test_resolve_participant_id_expands_single_match_without_sending(self, tmp_path):
+        tool = CommunicateTool(str(tmp_path / "outbox"))
+
+        async def sender(request: CommunicateRequest):
+            return ToolResult(tool_call_id="", content="ok")
+
+        tool.register_sender(
+            "chan:",
+            sender,
+            lambda pid: f"chan:single:{pid}" if pid == "alice" else None,
+        )
+
+        assert tool.resolve_participant_id("alice") == "chan:single:alice"
+        assert tool.resolve_participant_id("chan:single:alice") == "chan:single:alice"
+        assert tool.resolve_participant_id("unknown") == "unknown"
+
     @pytest.mark.asyncio
     async def test_prefix_match_bypasses_checker(self, tmp_path):
         tool = CommunicateTool(str(tmp_path / "outbox"))
@@ -1399,10 +1431,13 @@ class TestCommunicateToolCheckers:
         )
 
         assert conversation_result.is_error
+        assert conversation_result.content.startswith("消息发送失败：")
         assert "不支持 conversation_id" in conversation_result.content
         assert attachment_result.is_error
+        assert attachment_result.content.startswith("消息发送失败：")
         assert "不支持附件" in attachment_result.content
         assert extra_result.is_error
+        assert extra_result.content.startswith("消息发送失败：")
         assert "不支持 extra" in extra_result.content
 
 

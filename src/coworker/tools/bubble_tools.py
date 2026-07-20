@@ -199,6 +199,17 @@ class BubbleSpawnTool(Tool):
                 is_error=True,
             )
 
+        resolved_participant_id = (
+            participant_id.strip() if isinstance(participant_id, str) else ""
+        )
+        if resolved_participant_id and self._communicate is not None:
+            try:
+                resolved_participant_id = self._communicate.resolve_participant_id(
+                    resolved_participant_id
+                )
+            except ValueError as error:
+                return ToolResult(tool_call_id="", content=str(error), is_error=True)
+
         max_cycles = max(1, min(max_cycles, 50))
         provider, model = _resolve_bubble_model_config(self._parent_brain, provider, model)
         provider_obj = self._parent_brain._providers.get(provider)
@@ -263,7 +274,7 @@ class BubbleSpawnTool(Tool):
             return ToolResult(tool_call_id="", content=result, is_error=True)
         bubble = result
         bubble.forked_tree = forked_tree
-        bubble.participant_id = participant_id.strip() if isinstance(participant_id, str) else ""
+        bubble.participant_id = resolved_participant_id
         bubble.conversation_id = conversation_id.strip() if isinstance(conversation_id, str) else ""
         bubble.handoff_transparency = self._should_use_handoff_transparency(
             bubble.participant_id

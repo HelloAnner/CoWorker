@@ -759,7 +759,12 @@ class TestBubbleMiniLoop:
 
         registry = ToolRegistry()
         communicate = CommunicateTool(str(tmp_path / "outbox"))
-        communicate.register_sender(f"{participant_id.split(':', 1)[0]}:", sender)
+        supports_extra = participant_id.startswith("coworker-desktop:")
+        communicate.register_sender(
+            f"{participant_id.split(':', 1)[0]}:",
+            sender,
+            supports_extra=supports_extra,
+        )
         registry.register(communicate)
         mock_brain.think = AsyncMock(
             side_effect=[
@@ -809,28 +814,37 @@ class TestBubbleMiniLoop:
             if participant_id.startswith("coworker-desktop:")
             else f"{BUBBLE_REPLY_PREFIX}已经处理"
         )
+        start_extra = (
+            bubble_handoff_message_extra(
+                bubble.id,
+                phase="start",
+                resumed=resumed,
+            )
+            if supports_extra
+            else {}
+        )
+        reply_extra = bubble_reply_message_extra(bubble.id) if supports_extra else {}
+        end_extra = (
+            bubble_handoff_message_extra(bubble.id, phase="end") if supports_extra else {}
+        )
         assert sent == [
             CommunicateRequest(
                 participant_id=participant_id,
                 message=format_handoff_start_message(bubble.id, resumed=resumed),
                 conversation_id="conv-1",
-                extra=bubble_handoff_message_extra(
-                    bubble.id,
-                    phase="start",
-                    resumed=resumed,
-                ),
+                extra=start_extra,
             ),
             CommunicateRequest(
                 participant_id=participant_id,
                 message=expected_reply,
                 conversation_id="conv-1",
-                extra=bubble_reply_message_extra(bubble.id),
+                extra=reply_extra,
             ),
             CommunicateRequest(
                 participant_id=participant_id,
                 message=format_handoff_end_message(bubble.id),
                 conversation_id="conv-1",
-                extra=bubble_handoff_message_extra(bubble.id, phase="end"),
+                extra=end_extra,
             ),
         ]
 
@@ -1146,6 +1160,85 @@ class TestBubbleSpawnTool:
         assert bubble.participant_id == "wecom:alice"
         assert bubble.conversation_id == "conv-3"
         assert not bubble.handoff_transparency
+
+    async def test_spawn_resolves_shorthand_participant_before_binding(
+        self,
+        store,
+        mock_short_term,
+        mock_brain,
+        mock_registry,
+        mock_prompt_builder,
+        mock_inbox,
+        tmp_path,
+    ):
+        from coworker.core.types import CommunicateRequest, ToolResult
+        from coworker.tools.communicate_tool import CommunicateTool
+
+        async def sender(request: CommunicateRequest):
+            return ToolResult(tool_call_id="", content="sent")
+
+        communicate = CommunicateTool(str(tmp_path / "outbox"))
+        communicate.register_sender(
+            "wecom:",
+            sender,
+            lambda pid: f"wecom:single:{pid}" if pid == "alice" else None,
+        )
+        tool = self._make_tool(
+            store,
+            mock_short_term,
+            mock_brain,
+            mock_registry,
+            mock_prompt_builder,
+            mock_inbox,
+            tmp_path,
+            communicate=communicate,
+            handoff_matcher=BubbleHandoffMatcher.from_config(participant_matches=["wecom:*"]),
+        )
+
+        with patch.object(tool, "start_existing"):
+            result = await tool.execute(goal="处理这个会话", participant_id=" alice ")
+
+        assert not result.is_error
+        bubble = store.list_active()[0]
+        assert bubble.participant_id == "wecom:single:alice"
+        assert bubble.handoff_transparency
+        assert "通信绑定：wecom:single:alice" in result.content
+
+    async def test_spawn_rejects_ambiguous_shorthand_participant(
+        self,
+        store,
+        mock_short_term,
+        mock_brain,
+        mock_registry,
+        mock_prompt_builder,
+        mock_inbox,
+        tmp_path,
+    ):
+        from coworker.core.types import CommunicateRequest, ToolResult
+        from coworker.tools.communicate_tool import CommunicateTool
+
+        async def sender(request: CommunicateRequest):
+            return ToolResult(tool_call_id="", content="sent")
+
+        communicate = CommunicateTool(str(tmp_path / "outbox"))
+        communicate.register_sender("chan_a:", sender, lambda pid: f"chan_a:{pid}")
+        communicate.register_sender("chan_b:", sender, lambda pid: f"chan_b:{pid}")
+        tool = self._make_tool(
+            store,
+            mock_short_term,
+            mock_brain,
+            mock_registry,
+            mock_prompt_builder,
+            mock_inbox,
+            tmp_path,
+            communicate=communicate,
+        )
+
+        result = await tool.execute(goal="处理这个会话", participant_id="alice")
+
+        assert result.is_error
+        assert "多个信道" in result.content
+        assert store.list_active() == []
 
     async def test_transparent_binding_defers_handoff_notice_to_bubble_loop(
         self,

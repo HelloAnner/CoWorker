@@ -740,7 +740,7 @@ async def _main() -> bool:
     api_app.set_collector(event_collector)
 
     desktop_sender = DesktopCommunicateSender(communicate)
-    communicate.register_sender(DESKTOP_PREFIX, desktop_sender.send)
+    communicate.register_sender(DESKTOP_PREFIX, desktop_sender.send, supports_extra=True)
 
     wecom_runner: WeComRunner | None = None
     if config.wecom.enabled:

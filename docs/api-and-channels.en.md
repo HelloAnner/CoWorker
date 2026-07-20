@@ -77,7 +77,7 @@ AGENT__BUBBLE_HANDOFF_TRANSPARENCY_STREAM_TRANSPORTS=["websocket","sse"]
 
 List only one value to enable transparency for that transport alone, or set `[]` to disable both. Desktop identities never fall through to this generic rule: they must explicitly match a participant glob, so the defaults make only `coworker-desktop:<desktop_id>:local:…` transparent, never the `claude` or `codex` actors.
 
-Transparent handoff messages also carry structured provenance in outbound JSON under `extra.bubble`. Frontends should prefer it for handoff state instead of parsing display copy:
+Outbound channels that support structured `extra` (generic WebSocket/SSE and Desktop) also carry provenance for transparent handoff messages under `extra.bubble`. Frontends should prefer it for handoff state instead of parsing display copy:
 
 ```json
 {
@@ -93,7 +93,7 @@ Transparent handoff messages also carry structured provenance in outbound JSON u
 }
 ```
 
-Completion notices use `phase: "end"`. Direct Bubble replies use `kind: "reply"`. Other channels retain the `🫧 泡泡：` text prefix as a fallback for older clients; Desktop has guaranteed support for the structured metadata, so it receives the original reply body and neither injects nor parses that prefix.
+Completion notices use `phase: "end"`. Direct Bubble replies use `kind: "reply"`. Plain channels without structured `extra` support, such as WeCom, do not receive this metadata and retain the `🫧 泡泡：` text prefix instead; Desktop has guaranteed support for the structured metadata, so it receives the original reply body and neither injects nor parses that prefix.
 
 Messages, registration, SSE, and WebSocket operations for `coworker-desktop:*` participants require `Authorization: Bearer <API__COMMUNICATION_TOKEN>` in the default production mode. This check is disabled only when both the server and Desktop explicitly set `development_mode=true`; that mode is only for local debugging on a loopback address.
 

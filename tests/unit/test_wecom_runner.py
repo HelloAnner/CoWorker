@@ -248,6 +248,8 @@ async def test_sender_rejects_unsupported_request_fields(tmp_path):
     )
 
     assert conversation_result.is_error is True
+    assert conversation_result.content.startswith("消息发送失败：")
     assert "不支持 conversation_id" in conversation_result.content
     assert extra_result.is_error is True
+    assert extra_result.content.startswith("消息发送失败：")
     assert "不支持 extra" in extra_result.content

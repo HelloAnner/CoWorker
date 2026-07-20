@@ -74,6 +74,7 @@ class BubbleMiniLoop:
         self._usage_stats = usage_stats
         self._usage_logs_root = Path(usage_logs_root) if usage_logs_root is not None else Path(logs_dir)
         self._long_term = long_term
+        self._communicate = communicate
         self._handoff_notifier = BubbleHandoffNotifier(communicate)
         # 默认 None：泡泡用一次性内存 TaskStore，任务不外泄到主线。
         # 注入真实 task_store 时（如潜意识 introspect），泡泡内 task_create 直写主线持久任务。
@@ -273,7 +274,11 @@ class BubbleMiniLoop:
             ),
             communicate_message_extra=(
                 bubble_reply_message_extra(bubble.id)
-                if bubble.handoff_transparency
+                if (
+                    bubble.handoff_transparency
+                    and self._communicate is not None
+                    and self._communicate.supports_message_extra(bubble.participant_id)
+                )
                 else {}
             ),
         )

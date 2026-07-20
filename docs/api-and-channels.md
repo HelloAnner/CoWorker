@@ -83,7 +83,7 @@ AGENT__BUBBLE_HANDOFF_TRANSPARENCY_STREAM_TRANSPORTS=["websocket","sse"]
 
 只填写其中一项即可只启用该传输层，设为 `[]` 可全部关闭。Desktop 身份不会回退到这条通用规则：它必须显式命中 participant glob，因此默认只透明 `coworker-desktop:<desktop_id>:local:…`，不会透明 `claude` 或 `codex` actor。
 
-透明转交消息还会在出站 JSON 的 `extra.bubble` 中携带结构化来源，前端应优先使用它渲染接管状态，而不是解析提示文案：
+支持结构化 `extra` 的出站通道（通用 WebSocket/SSE 与 Desktop）还会在透明转交消息的 `extra.bubble` 中携带来源，前端应优先使用它渲染接管状态，而不是解析提示文案：
 
 ```json
 {
@@ -99,7 +99,7 @@ AGENT__BUBBLE_HANDOFF_TRANSPARENCY_STREAM_TRANSPORTS=["websocket","sse"]
 }
 ```
 
-结束通知使用 `phase: "end"`；Bubble 直接回复使用 `kind: "reply"`。普通信道仍保留 `🫧 泡泡：` 文本前缀供旧客户端降级显示；Desktop 已保证消费结构化元数据，因此接收原始正文，不注入也不解析该前缀。
+结束通知使用 `phase: "end"`；Bubble 直接回复使用 `kind: "reply"`。不支持结构化 `extra` 的普通信道（如企业微信）不会收到这段元数据，仍通过 `🫧 泡泡：` 文本前缀标识来源；Desktop 已保证消费结构化元数据，因此接收原始正文，不注入也不解析该前缀。
 
 `coworker-desktop:*` participant 的消息、注册、SSE 和 WebSocket 在默认生产模式下都要求
 `Authorization: Bearer <API__COMMUNICATION_TOKEN>`。只有将服务端和 Desktop 配置都显式设为

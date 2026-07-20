@@ -326,13 +326,16 @@ class WeComRunner:
             if request.conversation_id:
                 return ToolResult(
                     tool_call_id="",
-                    content="企业微信信道不支持 conversation_id；请去掉该字段后重试。",
+                    content=(
+                        "消息发送失败：企业微信信道不支持 conversation_id；"
+                        "请去掉该字段后重试。"
+                    ),
                     is_error=True,
                 )
             if request.extra:
                 return ToolResult(
                     tool_call_id="",
-                    content="企业微信信道不支持 extra 扩展参数。",
+                    content="消息发送失败：企业微信信道不支持 extra 扩展参数。",
                     is_error=True,
                 )
             await self.send(participant_id, request.message, request.attachments)

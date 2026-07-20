@@ -5,7 +5,6 @@ import json
 import re
 import uuid
 from collections.abc import Awaitable, Callable, Iterable
-from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -22,6 +21,10 @@ ConnectionListener = Callable[[], None]
 
 _UNSAFE_OUTBOX_CHARS_RE = re.compile(r'[<>:"/\\|?*\x00-\x1f]+')
 _SAFE_PARTICIPANT_CHARS_RE = re.compile(r"[^a-zA-Z0-9_.:-]+")
+
+
+class ParticipantIdResolutionError(ValueError):
+    """Raised when a shorthand participant ID cannot be resolved unambiguously."""
 
 
 if TYPE_CHECKING:
@@ -128,6 +131,7 @@ class CommunicateTool(Tool):
         self._stream_transports: dict[str, str] = {}
         self._senders: dict[str, Sender] = {}
         self._checkers: dict[str, Checker] = {}
+        self._extra_capable_senders: set[str] = set()
         self._connection_listeners: list[ConnectionListener] = []
 
     def add_connection_listener(self, listener: ConnectionListener) -> None:
@@ -200,13 +204,64 @@ class CommunicateTool(Tool):
             return False
         return transports is None or transport in set(transports)
 
-    def register_sender(self, prefix: str, sender: Sender, checker: Checker | None = None) -> None:
+    def register_sender(
+        self,
+        prefix: str,
+        sender: Sender,
+        checker: Checker | None = None,
+        *,
+        supports_extra: bool = False,
+    ) -> None:
         """注册一个按 participant_id 前缀路由的发送器（如 wecom: → 企微 runner.sender）。
         可选传入 checker：当 participant_id 无前缀时，用于判断该信道能否处理并返回规范化 ID。
+        supports_extra 表示该发送器能消费结构化 extra；默认关闭，避免系统元数据使纯文本信道拒绝消息。
         """
         self._senders[prefix] = sender
         if checker is not None:
             self._checkers[prefix] = checker
+        if supports_extra:
+            self._extra_capable_senders.add(prefix)
+        else:
+            self._extra_capable_senders.discard(prefix)
+
+    def supports_message_extra(self, participant_id: str) -> bool:
+        """Whether the participant's selected transport accepts structured ``extra``."""
+        canonical_id, sender_prefix = self._resolve_participant_id(participant_id)
+        if sender_prefix is not None:
+            return sender_prefix in self._extra_capable_senders
+        return canonical_id in self._ws_connections
+
+    def resolve_participant_id(self, participant_id: str) -> str:
+        """Expand a shorthand participant ID without sending a message.
+
+        Full IDs and IDs that no checker recognizes are returned unchanged.  A
+        shorthand that matches more than one channel is rejected in the same
+        way as :meth:`execute`, so callers such as ``bubble_spawn`` cannot bind
+        an ambiguous recipient.
+        """
+        canonical_id, _ = self._resolve_participant_id(participant_id)
+        return canonical_id
+
+    def _resolve_participant_id(self, participant_id: str) -> tuple[str, str | None]:
+        for prefix in sorted(self._senders, key=len, reverse=True):
+            if participant_id.startswith(prefix):
+                return participant_id, prefix
+
+        resolved: dict[str, str] = {}
+        for prefix, checker in self._checkers.items():
+            canonical = checker(participant_id)
+            if canonical is not None:
+                resolved[prefix] = canonical
+        if len(resolved) == 1:
+            prefix, canonical_id = next(iter(resolved.items()))
+            return canonical_id, prefix
+        if len(resolved) > 1:
+            options = "\n".join(f"  - {cid}（前缀：{p}）" for p, cid in resolved.items())
+            raise ParticipantIdResolutionError(
+                f"participant_id '{participant_id}' 在多个信道中都能匹配，"
+                f"请使用完整 participant_id 重新调用：\n{options}"
+            )
+        return participant_id, None
 
     @property
     def definition(self) -> ToolDefinition:
@@ -395,6 +450,11 @@ class CommunicateTool(Tool):
         if not isinstance(extra, dict):
             return ToolResult(tool_call_id="", content="extra 必须是对象。", is_error=True)
 
+        try:
+            participant_id, sender_prefix = self._resolve_participant_id(participant_id)
+        except ParticipantIdResolutionError as error:
+            return ToolResult(tool_call_id="", content=str(error), is_error=True)
+
         request = CommunicateRequest(
             participant_id=participant_id,
             message=message,
@@ -402,31 +462,8 @@ class CommunicateTool(Tool):
             attachments=attachments,
             extra=extra,
         )
-        for prefix, sender in sorted(
-            self._senders.items(), key=lambda item: len(item[0]), reverse=True
-        ):
-            if participant_id.startswith(prefix):
-                return await sender(request)
-
-        if self._checkers:
-            resolved: dict[str, str] = {}
-            for prefix, checker in self._checkers.items():
-                canonical = checker(participant_id)
-                if canonical is not None:
-                    resolved[prefix] = canonical
-            if len(resolved) == 1:
-                prefix, canonical_id = next(iter(resolved.items()))
-                return await self._senders[prefix](replace(request, participant_id=canonical_id))
-            elif len(resolved) > 1:
-                options = "\n".join(f"  - {cid}（前缀：{p}）" for p, cid in resolved.items())
-                return ToolResult(
-                    tool_call_id="",
-                    content=(
-                        f"participant_id '{participant_id}' 在多个信道中都能匹配，"
-                        f"请使用完整 participant_id 重新调用：\n{options}"
-                    ),
-                    is_error=True,
-                )
+        if sender_prefix is not None:
+            return await self._senders[sender_prefix](request)
 
         try:
             if participant_id in self._ws_connections:
@@ -438,19 +475,22 @@ class CommunicateTool(Tool):
             if conversation_id:
                 return ToolResult(
                     tool_call_id="",
-                    content="该通信目标不支持 conversation_id；请去掉该字段后重试。",
+                    content=(
+                        "消息发送失败：该通信目标不支持 conversation_id；"
+                        "请去掉该字段后重试。"
+                    ),
                     is_error=True,
                 )
             if extra:
                 return ToolResult(
                     tool_call_id="",
-                    content="该通信目标不支持 extra 扩展参数。",
+                    content="消息发送失败：该通信目标不支持 extra 扩展参数。",
                     is_error=True,
                 )
             if attachments:
                 return ToolResult(
                     tool_call_id="",
-                    content="该通信目标不支持附件；请改用支持附件的信道。",
+                    content="消息发送失败：该通信目标不支持附件；请改用支持附件的信道。",
                     is_error=True,
                 )
             if not message:
